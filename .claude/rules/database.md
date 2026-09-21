@@ -15,4 +15,5 @@ paths:
 - Read `project_url` and `service_role_key` from `vault.decrypted_secrets` in pg_net calls. Never hardcode them.
 - `consecutive_below_threshold_count` is written only by `/daily-cron-autoskip`.
 - Member-count math uses `group_members.joined_at <= day_instances.opened_at`, so late joiners never change a past day.
-- Extensions `pg_cron` and `pg_net` are enabled manually in the dashboard. Migrations should assume they exist and not try to create them.
+- Extensions `pg_cron` and `pg_net` are created in the first migration, so local, CI and production match. Do not rely on a dashboard toggle.
+- Functions are executable by `anon` and `authenticated` by default (Supabase's default privileges), which is privilege escalation on a `SECURITY DEFINER` function. Every new privileged function must `revoke all ... from public, anon, authenticated` — naming the roles, since revoking from `public` alone does not remove explicit grants.

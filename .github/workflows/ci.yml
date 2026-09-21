@@ -25,7 +25,11 @@ jobs:
     if: ${{ hashFiles('supabase/config.toml') != '' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
       - uses: supabase/setup-cli@v1
       - run: supabase start
       - run: supabase db lint --level warning --fail-on warning
       - run: supabase test db
+      # Runs the real handlers against the started stack; OpenAI is faked, so no key.
+      - run: deno task test:integration
