@@ -1,0 +1,8 @@
+{
+  "lint": { "include": ["supabase/functions/"] },
+  "fmt": { "include": ["supabase/functions/"] },
+  "test": { "include": ["supabase/functions/"] },
+  "tasks": {
+    "check": "deno fmt --check && deno lint && deno test --allow-env"
+  }
+}
