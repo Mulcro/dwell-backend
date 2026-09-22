@@ -24,6 +24,7 @@ import {
   serviceClient,
   serviceRequest,
   serviceRoleKey,
+  waitForRealtime,
 } from "./_shared/test_helpers.ts";
 
 /** The seeded 7-day plan, in order. Advancement must follow exactly this. */
@@ -210,6 +211,9 @@ Deno.test({
     });
 
     try {
+      // Prove the pipeline is live before relying on it for an assertion.
+      await waitForRealtime();
+
       const created = await invoke(() =>
         handleCreateGroup(
           post({ name: "Realtime Crew", plan_challenge_id: SEED_PLAN_ID }, alice.token),

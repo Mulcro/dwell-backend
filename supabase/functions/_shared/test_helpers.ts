@@ -195,3 +195,75 @@ export function nighttimeTimezone(): string {
   }
   throw new Error("no nighttime timezone found");
 }
+
+/**
+ * Blocks until Realtime is actually streaming changes.
+ *
+ * After `supabase start` or a `db reset` the Realtime container can accept a
+ * subscription and report SUBSCRIBED while it is still catching up on the publication,
+ * so the first events after a schema change are silently missed. Subscribing to a
+ * throwaway row and poking it until something arrives proves the pipeline is live.
+ */
+export async function waitForRealtime(timeoutMs = 60_000): Promise<void> {
+  const db = serviceClient();
+  const client = createClient(url(), Deno.env.get("SUPABASE_ANON_KEY") ?? LOCAL_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { data: group } = await db
+    .from("groups")
+    .insert({
+      name: "realtime warmup",
+      plan_challenge_id: SEED_PLAN_ID,
+      challenge_status: "active",
+    })
+    .select("id")
+    .single();
+
+  const { data: day } = await db
+    .from("day_instances")
+    .insert({
+      group_id: group!.id,
+      day_index: 1,
+      date: new Date().toISOString().slice(0, 10),
+      passage_ref: "HEB.6.19",
+    })
+    .select("id")
+    .single();
+
+  try {
+    await client.realtime.setAuth(serviceRoleKey());
+
+    let delivered = false;
+    const seen = new Promise<void>((resolve) => {
+      client
+        .channel(`warmup-${day!.id}`)
+        .on("postgres_changes", {
+          event: "UPDATE",
+          schema: "public",
+          table: "day_instances",
+          filter: `group_id=eq.${group!.id}`,
+        }, () => {
+          delivered = true;
+          resolve();
+        })
+        .subscribe();
+    });
+
+    const deadline = Date.now() + timeoutMs;
+    let poke = 0;
+    while (!delivered && Date.now() < deadline) {
+      await db
+        .from("day_instances")
+        .update({ participation_count: ++poke })
+        .eq("id", day!.id);
+      await Promise.race([seen, new Promise((r) => setTimeout(r, 2000))]);
+    }
+
+    if (!delivered) throw new Error(`Realtime never delivered a change within ${timeoutMs}ms`);
+  } finally {
+    await client.removeAllChannels();
+    client.realtime.disconnect();
+    await db.from("groups").delete().eq("id", group!.id);
+  }
+}
