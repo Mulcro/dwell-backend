@@ -26,7 +26,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
+      # Pinned: config.toml is written by the local CLI and older versions
+      # reject its newer keys.
       - uses: supabase/setup-cli@v1
+        with: { version: 2.117.0 }
       - run: supabase start
       - run: supabase db lint --level warning --fail-on warning
       - run: supabase test db
