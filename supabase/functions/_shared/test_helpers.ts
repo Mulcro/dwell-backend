@@ -4,6 +4,7 @@
  * run with `deno task test:integration`.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { Dispatch } from "./dispatch.ts";
 import { toErrorResponse } from "./http.ts";
 import type { Ai } from "./openai.ts";
 
@@ -117,4 +118,80 @@ export function fakeAi(options: { flagged?: boolean } = {}): Ai & { generateCall
     },
   };
   return ai;
+}
+
+/** A request carrying the service role key, as pg_cron and pg_net send one. */
+export function serviceRequest(body: unknown = {}): Request {
+  return post(body, serviceRoleKey());
+}
+
+export function serviceRoleKey(): string {
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? LOCAL_SERVICE_KEY;
+}
+
+/** Records dispatches instead of making them, so cross-function calls are assertable. */
+export function fakeDispatch(): Dispatch & { calls: Array<{ name: string; body: unknown }> } {
+  const calls: Array<{ name: string; body: unknown }> = [];
+  const fn = (name: string, body: unknown) => {
+    calls.push({ name, body });
+    return Promise.resolve();
+  };
+  return Object.assign(fn, { calls });
+}
+
+/**
+ * An IANA timezone where it is currently daytime, so waking-hours logic can be tested
+ * at any hour the suite happens to run.
+ */
+export function daytimeTimezone(): string {
+  const zones = [
+    "UTC",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Moscow",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+    "America/Sao_Paulo",
+    "Asia/Dubai",
+    "Pacific/Honolulu",
+  ];
+  for (const zone of zones) {
+    const hour = Number.parseInt(
+      new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hour12: false })
+        .format(new Date()),
+      10,
+    ) % 24;
+    if (hour >= 9 && hour < 20) return zone;
+  }
+  throw new Error("no daytime timezone found");
+}
+
+/** The inverse: a timezone where it is the middle of the night right now. */
+export function nighttimeTimezone(): string {
+  const zones = [
+    "UTC",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Moscow",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+    "America/Sao_Paulo",
+    "Asia/Dubai",
+    "Pacific/Honolulu",
+  ];
+  for (const zone of zones) {
+    const hour = Number.parseInt(
+      new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hour12: false })
+        .format(new Date()),
+      10,
+    ) % 24;
+    if (hour >= 1 && hour < 6) return zone;
+  }
+  throw new Error("no nighttime timezone found");
 }

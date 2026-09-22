@@ -1,10 +1,23 @@
 {
-  "lint": { "include": ["supabase/functions/"] },
-  "fmt": { "include": ["supabase/functions/"], "lineWidth": 100 },
-  "test": { "include": ["supabase/functions/"] },
+  "lint": {
+    "include": [
+      "supabase/functions/"
+    ]
+  },
+  "fmt": {
+    "include": [
+      "supabase/functions/"
+    ],
+    "lineWidth": 100
+  },
+  "test": {
+    "include": [
+      "supabase/functions/"
+    ]
+  },
   "tasks": {
     "check": "deno fmt --check && deno lint && deno test --allow-env --ignore='**/*_integration_test.ts'",
-    "test:integration": "deno test --allow-env --allow-net --allow-read supabase/functions/flow_integration_test.ts"
+    "test:integration": "deno test --allow-env --allow-net --allow-read supabase/functions/"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.19",
