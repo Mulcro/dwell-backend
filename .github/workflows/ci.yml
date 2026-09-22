@@ -22,7 +22,6 @@ jobs:
 
   database:
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('supabase/config.toml') != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
