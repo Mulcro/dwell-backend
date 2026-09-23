@@ -68,34 +68,45 @@ export async function handleSubmitReflection(
 
   const reflectionId = inserted.id;
 
-  const { flagged } = await ai.moderate(text);
-  if (flagged) {
-    await db
+  // From here on the row exists but counts toward nothing. If any step fails we must
+  // remove it again: `unique (user_id, day_instance_id)` means a leftover `pending` row
+  // would answer every retry with 409, locking the member out of the day permanently
+  // over what may have been a momentary upstream blip.
+  try {
+    const { flagged } = await ai.moderate(text);
+    if (flagged) {
+      // A deliberate terminal state, not a failure: keep the row so the same content
+      // cannot simply be resubmitted, and leave it hidden and uncounted.
+      await db
+        .from("reflections")
+        .update({ moderation_status: "flagged" })
+        .eq("id", reflectionId);
+      return json({ reflection_id: reflectionId, moderation_status: "flagged" });
+    }
+
+    const enrichment = await enrich(db, ai, day.group_id, text, language);
+
+    // One UPDATE carries the enrichment and the approval together, so the trigger sees a
+    // complete row the moment the day is allowed to count it.
+    const { error: approveError } = await db
       .from("reflections")
-      .update({ moderation_status: "flagged" })
+      .update({
+        ...enrichment,
+        is_late: Date.now() > day.windowEndsAt,
+        moderation_status: "approved",
+      })
       .eq("id", reflectionId);
-    return json({ reflection_id: reflectionId, moderation_status: "flagged" });
+
+    if (approveError) {
+      console.error("submit-reflection approval failed", approveError);
+      throw new HttpError(500, "Could not save reflection");
+    }
+
+    return json({ reflection_id: reflectionId, moderation_status: "approved" });
+  } catch (err) {
+    await db.from("reflections").delete().eq("id", reflectionId);
+    throw err;
   }
-
-  const enrichment = await enrich(db, ai, day.group_id, text, language);
-
-  // One UPDATE carries the enrichment and the approval together, so the trigger sees a
-  // complete row the moment the day is allowed to count it.
-  const { error: approveError } = await db
-    .from("reflections")
-    .update({
-      ...enrichment,
-      is_late: Date.now() > day.windowEndsAt,
-      moderation_status: "approved",
-    })
-    .eq("id", reflectionId);
-
-  if (approveError) {
-    console.error("submit-reflection approval failed", approveError);
-    throw new HttpError(500, "Could not save reflection");
-  }
-
-  return json({ reflection_id: reflectionId, moderation_status: "approved" });
 }
 
 interface PostableDay {

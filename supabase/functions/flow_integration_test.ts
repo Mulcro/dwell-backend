@@ -193,6 +193,36 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(day!.participation_count, 0);
     });
 
+    await t.step("a failed AI call leaves nothing behind, so the member can retry", async () => {
+      // Without cleanup the pending row would answer every retry with 409 forever.
+      const brokenAi = {
+        moderate: () => Promise.reject(new Error("upstream blip")),
+        generateJson: () => Promise.resolve({}),
+        generateText: () => Promise.resolve(""),
+      };
+
+      const failed = await invoke(() =>
+        handleSubmitReflection(
+          post({
+            day_instance_id: dayInstanceId,
+            media_type: "text",
+            content: "first attempt",
+            language: "en",
+          }, bob.token),
+          db,
+          brokenAi,
+        )
+      );
+      assertEquals(failed.status, 500);
+
+      const { count } = await db
+        .from("reflections")
+        .select("id", { count: "exact", head: true })
+        .eq("day_instance_id", dayInstanceId)
+        .eq("user_id", bob.id);
+      assertEquals(count, 0);
+    });
+
     await t.step("one reflection per person per day", async () => {
       const res = await submit(
         { day_instance_id: dayInstanceId, media_type: "text", content: "again", language: "en" },
