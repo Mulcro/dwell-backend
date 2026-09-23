@@ -57,6 +57,32 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(unknownPlan.status, 404);
     });
 
+    await t.step("create-group refuses a plan with no day list", async () => {
+      // A plan row without its days would produce an active group that can never open
+      // Day 1, so it has to be caught before the group exists.
+      const { data: brokenPlan } = await db
+        .from("plan_challenges")
+        .insert({ title: "Broken Plan", day_count: 3 })
+        .select("id")
+        .single();
+
+      try {
+        const res = await createGroup(
+          { name: "Doomed Crew", plan_challenge_id: brokenPlan!.id },
+          alice.token,
+        );
+        assertEquals(res.status, 422);
+
+        const { count } = await db
+          .from("groups")
+          .select("id", { count: "exact", head: true })
+          .eq("plan_challenge_id", brokenPlan!.id);
+        assertEquals(count, 0);
+      } finally {
+        await db.from("plan_challenges").delete().eq("id", brokenPlan!.id);
+      }
+    });
+
     await t.step("create-group creates a forming group with its creator inside", async () => {
       const res = await createGroup(
         { name: "Morning Crew", plan_challenge_id: SEED_PLAN_ID },

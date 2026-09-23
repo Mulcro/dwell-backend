@@ -21,10 +21,25 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
 
   const { data: plan } = await db
     .from("plan_challenges")
-    .select("id")
+    .select("id, day_count")
     .eq("id", planChallengeId)
     .maybeSingle();
   if (!plan) throw new HttpError(404, "Plan not found");
+
+  // A plan missing its day list would let a group form and activate, and only fail when
+  // Day 1 tried to open -- leaving an active challenge with no day and no way forward.
+  // Refuse here, while there is still nothing to clean up.
+  const { count: dayCount } = await db
+    .from("plan_days")
+    .select("day_index", { count: "exact", head: true })
+    .eq("plan_challenge_id", planChallengeId);
+
+  if ((dayCount ?? 0) !== plan.day_count) {
+    console.error(
+      `plan ${planChallengeId} has ${dayCount} plan_days but day_count ${plan.day_count}`,
+    );
+    throw new HttpError(422, "That plan is not ready to use yet");
+  }
 
   const { data: group, error: groupError } = await db
     .from("groups")
