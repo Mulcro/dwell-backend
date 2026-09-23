@@ -13,6 +13,12 @@ Dwell's backend is Supabase: Postgres, Auth, Realtime, and Edge Functions (TypeS
 - The service role key is server-side only. It must never appear in client-facing code, logs, or responses.
 - AI calls are tiered: a cheap/fast OpenAI model for classification, a mid-tier one for generation. Moderation uses the standalone OpenAI Moderation endpoint, not the main LLM call.
 - Before finishing any change, run `deno task check` (fmt, lint, tests) and, when SQL changed, `supabase db lint` and `supabase test db`. CI enforces the same; fix failures, never disable a rule to pass.
+- `supabase/functions/deno.json` is the import map the edge runtime reads. The root `deno.json` is
+  for tasks and tooling only, and is invisible to a deployed function: a dependency added to one
+  must be added to the other, or every function fails to boot.
+- `./scripts/smoke-functions.sh` boots the functions over HTTP. Run it after touching any
+  `index.ts`, dependency or import map, since the test suites import handlers directly and never
+  execute the serving layer.
 - Every Edge Function ships with a `*_test.ts` next to it (`Deno.test`). Every migration that adds logic or RLS ships with a pgTAP test in `supabase/tests/`. Test behavior (threshold math, moderation gating, RLS unlock rules), not implementation.
 - Keep changes minimal: no new code beyond what the task requires.
 - Commit messages are a single line stating the main purpose of the change. No body, no bullet list, and no trailers. Never add yourself as a co-author or contributor.

@@ -35,3 +35,6 @@ jobs:
       - run: supabase test db
       # Runs the real handlers against the started stack; OpenAI is faked, so no key.
       - run: deno task test:integration
+      # Boots the functions over HTTP. The suites above import handlers directly and
+      # never execute index.ts, so only this catches a function that cannot start.
+      - run: ./scripts/smoke-functions.sh
