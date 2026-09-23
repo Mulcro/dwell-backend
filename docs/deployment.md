@@ -46,16 +46,29 @@ Everything else is PostgREST under `{base}/rest/v1/`, governed entirely by RLS
 
 ## Verified against the deployed project
 
-create-group, join-group (activates the group and opens Day 1), group-challenge-action,
-the anonymous invite preview, RLS isolation for anonymous callers, system functions
-refusing a user token while accepting a secret key, and a real pg_net dispatch from
-inside the database returning 200.
+Against the live project, with real OpenAI calls:
+
+- `create-group`, `join-group` (activates the group and opens Day 1 from the plan),
+  `group-challenge-action`.
+- `submit-reflection` end to end, both `text` and `voice`: moderation passes, the
+  reflection is approved, `sentiment_tag` is set, and `translated_text` carries a real
+  translation into a group-mate's `preferred_language` plus the personal response.
+- The approval fires `check_day_threshold`: the day flips to `threshold_met`,
+  `participation_count` tracks approved reflections, and exactly one `group_pulse` is
+  written however many people post.
+- `generate-group-pulse` reached through a genuine pg_net dispatch from inside the
+  database (HTTP 200).
+- The unlock rule: before posting, a member sees no reflections; after posting, they see
+  the whole day.
+- RLS isolation for anonymous callers; system functions refuse a user token and accept a
+  secret key.
 
 ## Known issues
 
-1. **`submit-reflection` returns `{"error":"AI service unavailable"}`.** The OpenAI
-   account has no credits (`credit_balance_exhausted`). The key itself is valid. Until
-   credits are added, no reflection can be posted, so no day can reach its threshold.
-2. **`.env` has a `sb_secret_…` key stored under `SUPABASE_ANON_KEY`.** That is a
+1. **`.env` has a `sb_secret_...` key stored under `SUPABASE_ANON_KEY`.** That is a
    server-side key. If it is used as the app's anon key it grants full database access
    to every client, bypassing RLS entirely. It should be the publishable key.
+2. **The group pulse can over-generalise.** It fires the moment the threshold is met,
+   which may be a single reflection, but the prompt does not say how many it is
+   summarising -- so it can write "one of you... whereas others" about one person. Worth
+   passing the count into the prompt.
