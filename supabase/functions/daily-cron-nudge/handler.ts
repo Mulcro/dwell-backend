@@ -21,7 +21,7 @@ const APPROACHING_MS = 6 * 60 * 60 * 1000;
 export async function handleDailyCronNudge(
   req: Request,
   db: SupabaseClient,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

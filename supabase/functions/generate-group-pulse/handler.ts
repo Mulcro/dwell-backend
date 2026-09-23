@@ -14,7 +14,7 @@ export async function handleGenerateGroupPulse(
   req: Request,
   db: SupabaseClient,
   ai: Ai,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

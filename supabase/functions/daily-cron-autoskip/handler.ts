@@ -25,7 +25,7 @@ interface ShortDay {
 export async function handleDailyCronAutoskip(
   req: Request,
   db: SupabaseClient,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

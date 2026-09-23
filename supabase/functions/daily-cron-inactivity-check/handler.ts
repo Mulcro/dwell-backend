@@ -21,7 +21,7 @@ export async function handleDailyCronInactivityCheck(
   req: Request,
   db: SupabaseClient,
   dispatch: Dispatch,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

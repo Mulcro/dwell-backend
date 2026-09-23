@@ -14,7 +14,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export async function handleWeeklyCronLeaderboard(
   req: Request,
   db: SupabaseClient,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

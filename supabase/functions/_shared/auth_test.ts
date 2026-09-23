@@ -62,3 +62,26 @@ Deno.test("requireUser resolves the caller from the token", async () => {
   );
   await assertRejects(() => requireUser(new Request("http://x"), auth), HttpError);
 });
+
+Deno.test("requireServiceRole accepts any of the project's server-side keys", () => {
+  // A project can carry the legacy service_role JWT and newer sb_secret_... keys at the
+  // same time, and pg_net may present either. Both must be admitted.
+  const legacy = "eyJhbGciOiJIUzI1NiJ9.legacy-service-role.sig";
+  const modern = "sb_secret_abcdefghijklmnopqrstuvwxyz";
+  const keys = [modern, legacy];
+
+  requireServiceRole(withAuth(`Bearer ${legacy}`), keys);
+  requireServiceRole(withAuth(`Bearer ${modern}`), keys);
+
+  assertThrows(
+    () => requireServiceRole(withAuth("Bearer sb_publishable_not_a_secret"), keys),
+    HttpError,
+    "Unauthorized",
+  );
+});
+
+Deno.test("requireServiceRole refuses when no key is configured", () => {
+  // An empty list must never degrade into "allow anyone".
+  assertThrows(() => requireServiceRole(withAuth("Bearer anything"), []), HttpError);
+  assertThrows(() => requireServiceRole(withAuth("Bearer anything"), [""]), HttpError);
+});

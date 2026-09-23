@@ -18,7 +18,7 @@ export async function handleEndOfChallengeSummary(
   req: Request,
   db: SupabaseClient,
   ai: Ai,
-  serviceRoleKey: string,
+  serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 

@@ -42,7 +42,10 @@ create table groups (
   auto_skip_after_days int not null default 3 check (auto_skip_after_days > 0),
   challenge_status challenge_status not null default 'forming',
   -- base64url: 9 bytes = 12 chars, no padding, URL-safe for magic links
-  invite_token text not null unique default translate(encode(gen_random_bytes(9), 'base64'), '+/', '-_'),
+  -- gen_random_bytes is pgcrypto, which lives in the extensions schema and is NOT on
+  -- the search_path when migrations run against the hosted database. Qualify it.
+  invite_token text not null unique
+    default translate(encode(extensions.gen_random_bytes(9), 'base64'), '+/', '-_'),
   -- PHASE1 #3: inactivity prompt state, written only by daily-cron-inactivity-check.
   consecutive_silent_days int not null default 0,
   prompt_pending boolean not null default false,
