@@ -114,6 +114,39 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(inviteToken.length > 0, true);
     });
 
+    await t.step("create-group records the reading rhythm", async () => {
+      const bad = await createGroup(
+        { name: "Bad Rhythm", plan_challenge_id: SEED_PLAN_ID, frequency: "hourly" },
+        alice.token,
+      );
+      assertEquals(bad.status, 400);
+
+      const badZone = await createGroup(
+        { name: "Bad Zone", plan_challenge_id: SEED_PLAN_ID, timezone: "Mars/Olympus" },
+        alice.token,
+      );
+      assertEquals(badZone.status, 400);
+
+      const ok = await createGroup({
+        name: "Weekday Crew",
+        plan_challenge_id: SEED_PLAN_ID,
+        frequency: "weekdays",
+        timezone: "America/New_York",
+      }, alice.token);
+      assertEquals(ok.status, 201);
+
+      const created = await ok.json();
+      groupIds.push(created.group_id);
+
+      const { data: group } = await db
+        .from("groups")
+        .select("frequency, timezone")
+        .eq("id", created.group_id)
+        .single();
+      assertEquals(group!.frequency, "weekdays");
+      assertEquals(group!.timezone, "America/New_York");
+    });
+
     await t.step("join-group rejects an unknown invite", async () => {
       const res = await joinGroup({ invite_token: "nope" }, bob.token);
       assertEquals(res.status, 404);

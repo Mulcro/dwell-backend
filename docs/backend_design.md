@@ -30,7 +30,7 @@ Base URL: `https://<project-ref>.supabase.co/functions/v1/<name>`. All require a
 
 | **Endpoint** | **Method** | **Auth** | **Request → Response** | **Description** |
 | --- | --- | --- | --- | --- |
-| /create-group | POST | Required | { name, plan_challenge_id, catch_up_threshold_pct?, auto_skip_after_days? } → { group_id, invite_token } | Creates a group in forming state plus a group_members row for the creator |
+| /create-group | POST | Required | { name, plan_challenge_id, frequency?, timezone?, catch_up_threshold_pct?, auto_skip_after_days? } → { group_id, invite_token } | Creates a group in forming state plus a group_members row for the creator. frequency is 'daily' (default), 'weekdays' or 'three_per_week'; timezone is the creator's IANA zone, which decides which local day it is for the weekday-based rhythms |
 | /join-group | POST | Required | { invite_token } → { group_id, challenge_status } | Adds the caller to the group. If this join brings membership to 2, flips the group to active and creates the Day 1 row |
 | /preview-group | POST (RPC) | None — public | { invite_token } → { name, plan_title } | Lets the in-browser invite-link flow show "You've been invited to [Group] doing [Plan]" before the visitor signs in or installs the app. Newly identified while writing this section — the MVP Spec's "works in-browser before forcing install" join flow implied this endpoint but it was never explicitly spec'd until now. Implemented as a security definer Postgres function (see Database) rather than an Edge Function, since it's a single read with no logic |
 | /submit-reflection | POST | Required | { day_instance_id, media_type, content?, transcript?, language } → { reflection_id, moderation_status } | Inserts the reflection as moderation_status='pending' (this insert does NOT gate the day) → OpenAI Moderation check → if flagged, stops early (stays hidden, never counts toward threshold); if approved, flips moderation_status to 'approved', and it is that UPDATE that fires check-day-threshold (see Database), plus one tiered-LLM call for sentiment tag + translation + personalized response written back onto the row |
@@ -106,6 +106,7 @@ create type day_status as enum ('open', 'threshold_met', 'complete', 'missed');
 create type challenge_status as enum ('forming', 'active', 'paused', 'completed', 'abandoned', 'expired_incomplete');
 create type insight_scope as enum ('day_instance', 'group_challenge');
 create type insight_type as enum ('group_pulse', 'nudge', 'end_summary', 'fallback_recap');
+create type day_frequency as enum ('daily', 'weekdays', 'three_per_week');
 
 create table users (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -142,6 +143,8 @@ create table groups (
   plan_challenge_id uuid not null references plan_challenges(id),
   catch_up_threshold_pct int not null default 50,
   auto_skip_after_days int not null default 3,
+  frequency day_frequency not null default 'daily',   -- how often a new day may open
+  timezone text not null default 'UTC',               -- whose weekend counts as the weekend
   challenge_status challenge_status not null default 'forming',
   invite_token text not null unique default translate(encode(gen_random_bytes(9), 'base64'), '+/', '-_'), -- base64url: 9 bytes = 12 chars, no padding, URL-safe for magic links
   created_by uuid not null references users(id),
@@ -491,7 +494,7 @@ The exact USFM range syntax (e.g. ROM.5.3-5) should be confirmed against the pas
 
 1. A reflection counts toward its day only once it is approved (check-day-threshold fires on that approval, not on the raw insert). Still below catch_up_threshold_pct after approval means the day stays open. is_late is set at approval time: true if the approving moment is past opened_at + 24 hours (the member's rolling window; a late joiner's window starts at max(day.opened_at, their joined_at)).
 2. Threshold met (even a day late) flips status to threshold_met retroactively, and everyone who already posted an approved reflection is unlocked in that same write. Only the call that actually flips the row dispatches generate-group-pulse, so it never double-fires.
-3. Advancement is threshold-gated AND paced. The next day opens only once the current day is threshold_met and has been open at least 24 hours. open_ready_next_days (pg_cron, every 15 min) marks the cleared day complete, copies the next passage from plan_days into a fresh day_instances row with opened_at = now(), and on the final day transitions the group to completed and fires end-of-challenge-summary. This is the "one per 24h" rule: a group can't binge a whole plan in an afternoon, and it is not cut off at a hard server midnight either.
+3. Advancement is threshold-gated, paced AND on-rhythm. The next day opens only once the current day is threshold_met, has been open at least 24 hours, and today is a reading day for the group's frequency (daily: always; weekdays: Mon-Fri; three_per_week: Mon/Wed/Fri), judged in the group's own timezone. On a rest day the cleared day deliberately stays threshold_met rather than being completed, since completing it would drop it out of open_ready_next_days' own search and no next day would ever open. daily-cron-autoskip skips rest days too: a rest day is not a missed day, so the below-threshold counter does not move. open_ready_next_days (pg_cron, every 15 min) marks the cleared day complete, copies the next passage from plan_days into a fresh day_instances row with opened_at = now(), and on the final day transitions the group to completed and fires end-of-challenge-summary. This is the "one per 24h" rule: a group can't binge a whole plan in an afternoon, and it is not cut off at a hard server midnight either.
 4. If a day stays below threshold past its window, /daily-cron-autoskip is the sole writer of consecutive_below_threshold_count. Once per day it increments the counter for each active group's current open day that is still short, and when the counter hits the group's auto_skip_after_days it marks that day missed, opens the next day, and resets the counter to 0.
 5. Zero total posts for 3 consecutive days makes /daily-cron-inactivity-check fire the Continue/Pause/End prompt once; it doesn't re-fire while pending. Continue resets the silence counter, Pause freezes advancement and nudges, End sets challenge_status = 'abandoned'.
 6. expired_incomplete: a longer-horizon sweep in the same inactivity cron marks any group that is still 'active' or 'paused', has had no approved reflection for 14 days, and has not reached its final day, as expired_incomplete, then fires end-of-challenge-summary (which falls back to the lighter recap when there is little content). This is the MVP's concrete definition of "the challenge's time window elapsed," since a self-paced challenge has no hard clock.

@@ -12,7 +12,12 @@ interface ShortDay {
   day_index: number;
   consecutive_below_threshold_count: number;
   last_autoskip_on: string | null;
-  groups: { auto_skip_after_days: number; plan_challenge_id: string };
+  groups: {
+    auto_skip_after_days: number;
+    plan_challenge_id: string;
+    frequency: string;
+    timezone: string;
+  };
 }
 
 /**
@@ -28,18 +33,20 @@ export async function handleDailyCronAutoskip(
   db: SupabaseClient,
   dispatch: Dispatch,
   serviceRoleKey: string | string[],
+  now: Date = new Date(),
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const cutoff = new Date(Date.now() - DAY_MS).toISOString();
+  const today = now.toISOString().slice(0, 10);
+  const cutoff = new Date(now.getTime() - DAY_MS).toISOString();
 
   // Days still open past their 24h window, in groups that are actually running.
   const { data, error } = await db
     .from("day_instances")
     .select(
       "id, group_id, day_index, consecutive_below_threshold_count, last_autoskip_on, " +
-        "groups!inner(auto_skip_after_days, challenge_status, plan_challenge_id)",
+        "groups!inner(auto_skip_after_days, challenge_status, plan_challenge_id, " +
+        "frequency, timezone)",
     )
     .eq("status", "open")
     .eq("groups.challenge_status", "active")
@@ -60,6 +67,17 @@ export async function handleDailyCronAutoskip(
     if (day.last_autoskip_on === today) continue;
 
     const group = day.groups;
+
+    // A rest day is not a missed day. Skipping a weekend would both punish the group for
+    // a day they were never meant to post on and open the next day off-rhythm, so leave
+    // the whole group alone until its next reading day.
+    const { data: opensToday } = await db.rpc("day_opens_today", {
+      p_frequency: group.frequency,
+      p_timezone: group.timezone,
+      p_at: now.toISOString(),
+    });
+    if (opensToday === false) continue;
+
     const count = day.consecutive_below_threshold_count + 1;
 
     if (count >= group.auto_skip_after_days) {

@@ -52,6 +52,8 @@ async function makeGroup(
     dayStatus?: string;
     belowCount?: number;
     silentDays?: number;
+    frequency?: string;
+    timezone?: string;
   } = {},
 ): Promise<Fixture> {
   const { data: group } = await db
@@ -64,6 +66,8 @@ async function makeGroup(
       catch_up_threshold_pct: options.thresholdPct ?? 50,
       auto_skip_after_days: options.autoSkipAfterDays ?? 3,
       consecutive_silent_days: options.silentDays ?? 0,
+      frequency: options.frequency ?? "daily",
+      timezone: options.timezone ?? "UTC",
     })
     .select("id")
     .single();
@@ -294,6 +298,51 @@ Deno.test("system-triggered functions", async (t) => {
         .select("id", { count: "exact", head: true })
         .eq("group_id", f.groupId);
       assertEquals(count, 1);
+    });
+
+    await t.step("a weekday group is left alone at the weekend", async () => {
+      // A rest day is not a missed day: the counter must not move and nothing may be
+      // skipped, or a group would be punished for a day they never had to post on.
+      const f = track(
+        await makeGroup(db, [alice, bob], {
+          openedAgo: 2 * DAY,
+          belowCount: 2,
+          autoSkipAfterDays: 3,
+          frequency: "weekdays",
+        }),
+      );
+
+      const saturday = new Date("2026-09-26T10:00:00Z");
+      await invoke(() =>
+        handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key(), saturday)
+      );
+
+      const { data: day } = await db
+        .from("day_instances")
+        .select("status, consecutive_below_threshold_count")
+        .eq("id", f.dayId).single();
+      assertEquals(day!.status, "open");
+      assertEquals(day!.consecutive_below_threshold_count, 2);
+    });
+
+    await t.step("the same group is skipped on a Monday", async () => {
+      const f = track(
+        await makeGroup(db, [alice, bob], {
+          openedAgo: 2 * DAY,
+          belowCount: 2,
+          autoSkipAfterDays: 3,
+          frequency: "weekdays",
+        }),
+      );
+
+      const monday = new Date("2026-09-28T10:00:00Z");
+      await invoke(() =>
+        handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key(), monday)
+      );
+
+      const { data: day } = await db
+        .from("day_instances").select("status").eq("id", f.dayId).single();
+      assertEquals(day!.status, "missed");
     });
 
     await t.step("nudges reach someone whose window is closing, during their day", async () => {

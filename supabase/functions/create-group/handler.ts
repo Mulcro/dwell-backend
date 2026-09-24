@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
 
+const FREQUENCIES = ["daily", "weekdays", "three_per_week"];
+
 /**
  * POST /create-group
  * { name, plan_challenge_id, catch_up_threshold_pct?, auto_skip_after_days? }
@@ -18,6 +20,18 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
   const planChallengeId = requireString(body, "plan_challenge_id");
   const thresholdPct = optionalInt(body, "catch_up_threshold_pct", 1, 100);
   const autoSkipAfterDays = optionalInt(body, "auto_skip_after_days", 1, 30);
+
+  // Reading rhythm (design doc 4.1). Weekday boundaries are judged in the group's own
+  // timezone, taken from the creator's device, so "no new days at the weekend" means
+  // their weekend and not UTC's.
+  const frequency = body.frequency === undefined ? "daily" : requireString(body, "frequency");
+  if (!FREQUENCIES.includes(frequency)) {
+    throw new HttpError(400, `frequency must be one of: ${FREQUENCIES.join(", ")}`);
+  }
+  const timezone = body.timezone === undefined ? "UTC" : requireString(body, "timezone");
+  if (!isValidTimezone(timezone)) {
+    throw new HttpError(400, "timezone must be a valid IANA name, such as America/New_York");
+  }
 
   const { data: plan } = await db
     .from("plan_challenges")
@@ -47,6 +61,8 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
       name,
       plan_challenge_id: planChallengeId,
       created_by: userId,
+      frequency,
+      timezone,
       ...(thresholdPct !== undefined ? { catch_up_threshold_pct: thresholdPct } : {}),
       ...(autoSkipAfterDays !== undefined ? { auto_skip_after_days: autoSkipAfterDays } : {}),
     })
@@ -71,4 +87,14 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
   }
 
   return json({ group_id: group.id, invite_token: group.invite_token }, 201);
+}
+
+/** A timezone the database will also accept; a bad one would silently shift the rhythm. */
+function isValidTimezone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
 }
