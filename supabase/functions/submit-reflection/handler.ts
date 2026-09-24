@@ -9,7 +9,7 @@ const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
  * POST /submit-reflection
  * { day_instance_id, media_type, content?, transcript?, language }
- *   -> { reflection_id, moderation_status }
+ *   -> { reflection_id, moderation_status, is_late }
  *
  * Moderation is the gate, and it runs before anything else. The row is inserted as
  * `pending`, which counts toward nothing; only the later flip to `approved` fires
@@ -81,10 +81,15 @@ export async function handleSubmitReflection(
         .from("reflections")
         .update({ moderation_status: "flagged" })
         .eq("id", reflectionId);
-      return json({ reflection_id: reflectionId, moderation_status: "flagged" });
+      return json({
+        reflection_id: reflectionId,
+        moderation_status: "flagged",
+        is_late: false,
+      });
     }
 
     const enrichment = await enrich(db, ai, day.group_id, text, language);
+    const isLate = Date.now() > day.windowEndsAt;
 
     // One UPDATE carries the enrichment and the approval together, so the trigger sees a
     // complete row the moment the day is allowed to count it.
@@ -92,7 +97,7 @@ export async function handleSubmitReflection(
       .from("reflections")
       .update({
         ...enrichment,
-        is_late: Date.now() > day.windowEndsAt,
+        is_late: isLate,
         moderation_status: "approved",
       })
       .eq("id", reflectionId);
@@ -102,7 +107,12 @@ export async function handleSubmitReflection(
       throw new HttpError(500, "Could not save reflection");
     }
 
-    return json({ reflection_id: reflectionId, moderation_status: "approved" });
+    // Returned so the client can show the late badge without re-fetching the row.
+    return json({
+      reflection_id: reflectionId,
+      moderation_status: "approved",
+      is_late: isLate,
+    });
   } catch (err) {
     await db.from("reflections").delete().eq("id", reflectionId);
     throw err;

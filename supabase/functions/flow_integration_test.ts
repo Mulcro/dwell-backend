@@ -285,6 +285,8 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(res.status, 200);
       const body = await res.json();
       assertEquals(body.moderation_status, "approved");
+      // Returned inline so the client need not re-fetch just to show the late badge.
+      assertEquals(body.is_late, false);
       assertEquals(ai.generateCalls, 1);
 
       const { data: reflection } = await db
