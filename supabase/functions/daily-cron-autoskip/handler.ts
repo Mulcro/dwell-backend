@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
+import type { Dispatch } from "../_shared/dispatch.ts";
 import { json } from "../_shared/http.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,6 +26,7 @@ interface ShortDay {
 export async function handleDailyCronAutoskip(
   req: Request,
   db: SupabaseClient,
+  dispatch: Dispatch,
   serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
@@ -70,7 +72,7 @@ export async function handleDailyCronAutoskip(
         })
         .eq("id", day.id);
 
-      await openNextDay(db, day.group_id, day.day_index, group.plan_challenge_id);
+      await openNextDay(db, dispatch, day.group_id, day.day_index, group.plan_challenge_id);
       skipped++;
     } else {
       await db
@@ -87,6 +89,7 @@ export async function handleDailyCronAutoskip(
 /** Opens the day after a skipped one, or ends the challenge if the plan is exhausted. */
 async function openNextDay(
   db: SupabaseClient,
+  dispatch: Dispatch,
   groupId: string,
   dayIndex: number,
   planChallengeId: string,
@@ -100,7 +103,22 @@ async function openNextDay(
   if (!plan || dayIndex >= plan.day_count) {
     // The plan ran out; open_ready_next_days is not going to advance a missed day, so
     // close the challenge here rather than leaving it stuck.
-    await db.from("groups").update({ challenge_status: "completed" }).eq("id", groupId);
+    //
+    // This group reached the end the hard way, by skipping its final day rather than
+    // clearing it, so it never passes through open_ready_next_days -- which is the only
+    // other place a completion dispatches the summary. Without this call they would
+    // finish to silence.
+    const { data: closed } = await db
+      .from("groups")
+      .update({ challenge_status: "completed" })
+      .eq("id", groupId)
+      .neq("challenge_status", "completed")
+      .select("id");
+
+    // Only the call that actually closed it dispatches, so a retry cannot double-fire.
+    if (closed && closed.length > 0) {
+      await dispatch("end-of-challenge-summary", { group_id: groupId });
+    }
     return;
   }
 

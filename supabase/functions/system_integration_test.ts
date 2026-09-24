@@ -127,7 +127,7 @@ Deno.test("system-triggered functions", async (t) => {
       const results = await Promise.all([
         invoke(() => handleGenerateGroupPulse(unauthorized, db, fakeAi(), key())),
         invoke(() => handleEndOfChallengeSummary(unauthorized, db, fakeAi(), key())),
-        invoke(() => handleDailyCronAutoskip(unauthorized, db, key())),
+        invoke(() => handleDailyCronAutoskip(unauthorized, db, fakeDispatch(), key())),
         invoke(() => handleDailyCronNudge(unauthorized, db, key())),
         invoke(() => handleDailyCronInactivityCheck(unauthorized, db, fakeDispatch(), key())),
         invoke(() => handleWeeklyCronLeaderboard(unauthorized, db, key())),
@@ -137,7 +137,9 @@ Deno.test("system-triggered functions", async (t) => {
 
     await t.step("a user's own token is not enough for a system function", async () => {
       // The anon/authenticated JWT must never be mistaken for the service role.
-      const res = await invoke(() => handleDailyCronAutoskip(post({}, alice.token), db, key()));
+      const res = await invoke(() =>
+        handleDailyCronAutoskip(post({}, alice.token), db, fakeDispatch(), key())
+      );
       assertEquals(res.status, 401);
     });
 
@@ -216,7 +218,7 @@ Deno.test("system-triggered functions", async (t) => {
     await t.step("autoskip counts a short day, and re-running the same day does not", async () => {
       const f = track(await makeGroup(db, [alice, bob], { openedAgo: 2 * DAY }));
 
-      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, key()));
+      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key()));
       const { data: first } = await db
         .from("day_instances")
         .select("consecutive_below_threshold_count, status")
@@ -225,7 +227,7 @@ Deno.test("system-triggered functions", async (t) => {
       assertEquals(first!.status, "open");
 
       // A retry on the same day must not advance the counter again.
-      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, key()));
+      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key()));
       const { data: second } = await db
         .from("day_instances")
         .select("consecutive_below_threshold_count")
@@ -242,7 +244,7 @@ Deno.test("system-triggered functions", async (t) => {
         }),
       );
 
-      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, key()));
+      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key()));
 
       const { data: day } = await db
         .from("day_instances")
@@ -257,6 +259,41 @@ Deno.test("system-triggered functions", async (t) => {
         .eq("group_id", f.groupId).eq("day_index", 2).single();
       assertEquals(next!.passage_ref, "ISA.40.31");
       assertEquals(next!.status, "open");
+    });
+
+    await t.step("skipping the final day still closes the challenge with a summary", async () => {
+      // This group never clears a day, so it never passes through open_ready_next_days --
+      // the only other place a completion dispatches the summary. Reaching the end by
+      // auto-skip must not finish in silence.
+      const f = track(
+        await makeGroup(db, [alice, bob], {
+          openedAgo: 2 * DAY,
+          belowCount: 2,
+          autoSkipAfterDays: 3,
+          dayIndex: 7, // the seeded plan's last day
+        }),
+      );
+      const dispatch = fakeDispatch();
+
+      await invoke(() => handleDailyCronAutoskip(serviceRequest(), db, dispatch, key()));
+
+      const { data: day } = await db
+        .from("day_instances").select("status").eq("id", f.dayId).single();
+      assertEquals(day!.status, "missed");
+
+      const { data: group } = await db
+        .from("groups").select("challenge_status").eq("id", f.groupId).single();
+      assertEquals(group!.challenge_status, "completed");
+
+      assertEquals(dispatch.calls.length, 1);
+      assertEquals(dispatch.calls[0].name, "end-of-challenge-summary");
+
+      // No day 8 invented past the end of the plan.
+      const { count } = await db
+        .from("day_instances")
+        .select("id", { count: "exact", head: true })
+        .eq("group_id", f.groupId);
+      assertEquals(count, 1);
     });
 
     await t.step("nudges reach someone whose window is closing, during their day", async () => {
