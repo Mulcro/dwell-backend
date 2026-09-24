@@ -265,6 +265,11 @@ Deno.test("client-facing functions", async (t) => {
     });
 
     await t.step("an approved reflection carries the day over its threshold", async () => {
+      // Alice reads Spanish, so bob's English reflection has a real translation target.
+      // With everyone on the same language there is nobody to translate for, and
+      // translated_text is correctly left null.
+      await db.from("users").update({ preferred_language: "es" }).eq("id", alice.id);
+
       const ai = fakeAi();
       const res = await submit(
         {
@@ -284,11 +289,15 @@ Deno.test("client-facing functions", async (t) => {
 
       const { data: reflection } = await db
         .from("reflections")
-        .select("sentiment_tag, is_late")
+        .select("sentiment_tag, is_late, ai_response, translated_text")
         .eq("id", body.reflection_id)
         .single();
       assertEquals(reflection!.sentiment_tag, "hopeful");
       assertEquals(reflection!.is_late, false);
+      // The personalized response has its own column, and translated_text holds only
+      // language-keyed translations -- no smuggled "_response" key.
+      assertEquals(reflection!.ai_response, "Thank you for sharing this.");
+      assertEquals(reflection!.translated_text, { es: "texto traducido" });
 
       // 1 approved of 2 members = 50%, the default threshold: the trigger flips the day.
       const { data: day } = await db

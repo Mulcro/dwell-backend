@@ -178,7 +178,8 @@ create table reflections (
   media_type media_type not null,
   content text,
   transcript text,
-  translated_text jsonb,
+  translated_text jsonb,          -- language-keyed translations ONLY
+  ai_response text,               -- the personalized response from the generation step
   language text not null,
   sentiment_tag text,
   moderation_status text not null default 'pending',
@@ -379,13 +380,12 @@ alter table reflections enable row level security;
 create policy "own reflection" on reflections
   for select using (user_id = auth.uid());
 
-create policy "unlocked reflection" on reflections
-  for select using (
-    exists (select 1 from day_instances di join group_members gm on gm.group_id = di.group_id
-            where di.id = reflections.day_instance_id and gm.user_id = auth.uid())
-    and exists (select 1 from reflections mine
-                where mine.day_instance_id = reflections.day_instance_id and mine.user_id = auth.uid())
-  );
+-- Unlock needs BOTH halves (MVP Spec 5): the group cleared the day, AND the caller's
+-- own APPROVED reflection counts toward it. Posting alone is not enough, and a pending
+-- or flagged post unlocks nothing. Implemented as public.is_reflection_unlocked(), which
+-- comments and reactions reuse so they cannot outrun reading.
+create policy "read unlocked reflections" on reflections
+  for select using (public.is_reflection_unlocked(id));
 
 -- No INSERT policy for authenticated: direct inserts are revoked so moderation can't be bypassed.
 -- /submit-reflection uses the service role (which bypasses RLS) to insert as 'pending' and later flip to 'approved'.

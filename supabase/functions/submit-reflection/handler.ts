@@ -191,19 +191,22 @@ async function enrich(
 
     return {
       sentiment_tag: typeof result.sentiment_tag === "string" ? result.sentiment_tag : null,
-      translated_text: buildTranslations(result, targets, result.response),
+      translated_text: buildTranslations(result, targets),
+      ai_response: typeof result.response === "string" && result.response.trim() !== ""
+        ? result.response.trim()
+        : null,
     };
   } catch (err) {
     // Enrichment is a nicety; losing it must never block a reflection from counting.
     console.error("submit-reflection enrichment failed, approving without it", err);
-    return { sentiment_tag: null, translated_text: null };
+    return { sentiment_tag: null, translated_text: null, ai_response: null };
   }
 }
 
+/** Only real translations, keyed by language code. The AI response has its own column. */
 function buildTranslations(
   result: Record<string, unknown>,
   targets: string[],
-  response: unknown,
 ): Record<string, unknown> | null {
   const translations = result.translations;
   const payload: Record<string, unknown> = {};
@@ -213,9 +216,6 @@ function buildTranslations(
       const value = (translations as Record<string, unknown>)[lang];
       if (typeof value === "string") payload[lang] = value;
     }
-  }
-  if (typeof response === "string" && response.trim() !== "") {
-    payload._response = response;
   }
   return Object.keys(payload).length > 0 ? payload : null;
 }
