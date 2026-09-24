@@ -72,3 +72,9 @@ Against the live project, with real OpenAI calls:
    which may be a single reflection, but the prompt does not say how many it is
    summarising -- so it can write "one of you... whereas others" about one person. Worth
    passing the count into the prompt.
+
+## Client contract
+
+The API surface the SwiftUI app codes against lives in Notion, not this repo:
+**GLOO Hackathon 2026 -> Client API Contract**
+https://app.notion.com/p/3e5d36984c6e81faaecad797886ff45d
