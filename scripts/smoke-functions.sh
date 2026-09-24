@@ -67,4 +67,18 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/daily-c
 curl -s -X DELETE "$API/rest/v1/groups?id=eq.$group" \
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" > /dev/null
 
+# Remove the smoke user too. A leftover auth row changes member counts for any test that
+# counts users, which has already broken one suite.
+smoke_user=$(curl -s "$API/auth/v1/admin/users?per_page=200" \
+  -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" \
+  | python3 -c "
+import sys, json
+users = json.load(sys.stdin).get('users', [])
+print(next((u['id'] for u in users if u.get('email') == '$email'), ''))
+")
+if [ -n "$smoke_user" ]; then
+  curl -s -X DELETE "$API/auth/v1/admin/users/$smoke_user" \
+    -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" > /dev/null
+fi
+
 echo "SMOKE PASS"

@@ -15,9 +15,12 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Strict Crew',
         '00000000-0000-0000-0000-0000000000a1', '11111111-1111-1111-1111-111111111111',
         'active', 100);
 
-insert into group_members (group_id, user_id, joined_at)
-select 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', id, now() - interval '2 days'
-from auth.users;
+-- Name the three explicitly. Selecting from auth.users would sweep in any user left
+-- behind by another suite and quietly change the member count this test depends on.
+insert into group_members (group_id, user_id, joined_at) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', now() - interval '2 days'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', now() - interval '2 days'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', now() - interval '2 days');
 
 insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at)
 values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
