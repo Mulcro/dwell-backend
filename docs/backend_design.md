@@ -485,6 +485,7 @@ The exact USFM range syntax (e.g. ROM.5.3-5) should be confirmed against the pas
 
 ## 4.1 Group Formation & Late Joins
 
+- A group needs **2 members** to run and holds at most **7** (decided 2026-09-24). It sits in forming with just its creator; the second join activates it and opens Day 1. If it later drops below 2 -- today only via account deletion, since there is no leave flow -- it reverts to forming rather than continuing as a one-person challenge, where the threshold would be trivially met by the last member alone. The day rows survive, and the next join revives it through the ordinary path.
 - A group holds at most **7 members** (decided 2026-09-24), enforced by a trigger on group_members rather than only in /join-group, so simultaneous joins cannot overshoot the cap. The 8th join returns 409; an existing member re-tapping their invite link is exempt and stays a no-op.
 - A group is created in forming state. The creator picks the plan/challenge, frequency, and catch-up threshold solo — no group vote gates this.
 - /join-group flips the group to active and creates the Day 1 day_instances row the moment membership hits 2.
