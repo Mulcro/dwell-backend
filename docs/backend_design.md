@@ -485,6 +485,7 @@ The exact USFM range syntax (e.g. ROM.5.3-5) should be confirmed against the pas
 
 ## 4.1 Group Formation & Late Joins
 
+- A group holds at most **7 members** (decided 2026-09-24), enforced by a trigger on group_members rather than only in /join-group, so simultaneous joins cannot overshoot the cap. The 8th join returns 409; an existing member re-tapping their invite link is exempt and stays a no-op.
 - A group is created in forming state. The creator picks the plan/challenge, frequency, and catch-up threshold solo — no group vote gates this.
 - /join-group flips the group to active and creates the Day 1 day_instances row the moment membership hits 2.
 - A member joining once the group is already active gets no backfilled history — no missed days, no penalty. They're eligible to post starting with whatever day is currently open.

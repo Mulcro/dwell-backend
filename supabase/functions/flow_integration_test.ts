@@ -188,6 +188,41 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(dayCount, 1);
     });
 
+    await t.step("a group fills up at seven members", async () => {
+      const extras: TestUser[] = [];
+      try {
+        // Alice and bob are already in; five more fill it, and the eighth is refused.
+        for (let i = 0; i < 5; i++) {
+          const u = await createTestUser(db, `filler${i}`);
+          extras.push(u);
+          users.push(u);
+          const res = await joinGroup({ invite_token: inviteToken }, u.token);
+          assertEquals(res.status, 200);
+        }
+
+        const eighth = await createTestUser(db, "eighth");
+        extras.push(eighth);
+        users.push(eighth);
+        const full = await joinGroup({ invite_token: inviteToken }, eighth.token);
+        assertEquals(full.status, 409);
+        assertEquals((await full.json()).error, "This group is full");
+
+        // A member already inside can still re-tap their invite link.
+        const rejoin = await joinGroup({ invite_token: inviteToken }, extras[0].token);
+        assertEquals(rejoin.status, 200);
+
+        const { count } = await db
+          .from("group_members")
+          .select("user_id", { count: "exact", head: true })
+          .eq("group_id", groupId);
+        assertEquals(count, 7);
+      } finally {
+        for (const u of extras) {
+          await db.from("group_members").delete().eq("user_id", u.id).eq("group_id", groupId);
+        }
+      }
+    });
+
     await t.step("submit-reflection refuses a non-member", async () => {
       const res = await submit(
         { day_instance_id: dayInstanceId, media_type: "text", content: "hi", language: "en" },

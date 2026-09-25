@@ -33,6 +33,11 @@ export async function handleJoinGroup(req: Request, db: SupabaseClient): Promise
     .upsert({ group_id: group.id, user_id: userId }, { onConflict: "group_id,user_id" });
 
   if (memberError) {
+    // 23514 = the group-size trigger. The cap is enforced in the database, so this is
+    // the authoritative answer rather than a count read a moment earlier.
+    if (memberError.code === "23514") {
+      throw new HttpError(409, "This group is full");
+    }
     console.error("join-group member insert failed", memberError);
     throw new HttpError(500, "Could not join group");
   }
