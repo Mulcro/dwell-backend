@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
 
-const FREQUENCIES = ["daily", "weekdays", "three_per_week"];
+const FREQUENCIES = ["daily", "weekdays", "three_per_week", "four_per_week", "custom"];
 
 /**
  * POST /create-group
@@ -31,6 +31,16 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
   const timezone = body.timezone === undefined ? "UTC" : requireString(body, "timezone");
   if (!isValidTimezone(timezone)) {
     throw new HttpError(400, "timezone must be a valid IANA name, such as America/New_York");
+  }
+
+  // custom carries its own day pattern; every other frequency has one built in, and
+  // accepting a mask alongside them would leave two sources of truth disagreeing.
+  const customDays = parseCustomDays(body.custom_days);
+  if (frequency === "custom" && customDays === null) {
+    throw new HttpError(400, "custom_days is required when frequency is custom");
+  }
+  if (frequency !== "custom" && customDays !== null) {
+    throw new HttpError(400, "custom_days is only allowed when frequency is custom");
   }
 
   const { data: plan } = await db
@@ -63,6 +73,7 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
       created_by: userId,
       frequency,
       timezone,
+      custom_days: customDays,
       ...(thresholdPct !== undefined ? { catch_up_threshold_pct: thresholdPct } : {}),
       ...(autoSkipAfterDays !== undefined ? { auto_skip_after_days: autoSkipAfterDays } : {}),
     })
@@ -97,4 +108,28 @@ function isValidTimezone(name: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * ISO weekdays a custom group may open a day on: 1 = Monday ... 7 = Sunday.
+ *
+ * Returns null when absent. Duplicates are collapsed rather than rejected -- [1,1,3] is
+ * a clumsy way of saying [1,3], not an error worth failing a group creation over.
+ */
+function parseCustomDays(value: unknown): number[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new HttpError(400, "custom_days must be a non-empty array of weekdays");
+  }
+
+  const days = [...new Set(value)];
+  for (const day of days) {
+    if (typeof day !== "number" || !Number.isInteger(day) || day < 1 || day > 7) {
+      throw new HttpError(
+        400,
+        "custom_days must contain whole numbers from 1 (Monday) to 7 (Sunday)",
+      );
+    }
+  }
+  return (days as number[]).sort((a, b) => a - b);
 }

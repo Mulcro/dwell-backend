@@ -19,7 +19,7 @@ insert into group_members (group_id, user_id) values
 
 insert into day_instances (id, group_id, day_index, date, passage_ref)
 values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        1, current_date, 'HEB.6.19');
+        1, current_date, 'PSA.34.18');
 
 -- One of the two deletes their account.
 delete from auth.users where id = '22222222-2222-2222-2222-222222222222';

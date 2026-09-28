@@ -2,7 +2,7 @@
 -- depend on which day the suite happens to run.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(24);
 
 -- 2026-09-21 Mon, 09-23 Wed, 09-25 Fri, 09-26 Sat, 09-27 Sun
 select is(public.day_opens_today('daily', 'UTC', '2026-09-26T12:00:00Z'), true,
@@ -35,6 +35,24 @@ select is(public.day_opens_today('weekdays', 'Pacific/Auckland', '2026-09-25T20:
 select is(public.day_opens_today('weekdays', 'America/Los_Angeles', '2026-09-26T04:00:00Z'), true,
   'the same moment is still Friday in Los Angeles, so it opens');
 
+-- four_per_week: Mon, Tue, Thu, Fri -- the design's recommended rhythm.
+select is(public.day_opens_today('four_per_week', 'UTC', '2026-09-21T12:00:00Z'), true,
+  'four_per_week opens Monday');
+select is(public.day_opens_today('four_per_week', 'UTC', '2026-09-22T12:00:00Z'), true,
+  'four_per_week opens Tuesday');
+select is(public.day_opens_today('four_per_week', 'UTC', '2026-09-23T12:00:00Z'), false,
+  'four_per_week rests Wednesday');
+select is(public.day_opens_today('four_per_week', 'UTC', '2026-09-25T12:00:00Z'), true,
+  'four_per_week opens Friday');
+select is(public.day_opens_today('four_per_week', 'UTC', '2026-09-26T12:00:00Z'), false,
+  'four_per_week rests at the weekend');
+
+-- custom: whatever days the group chose.
+select is(public.day_opens_today('custom', 'UTC', '2026-09-27T12:00:00Z', array[7]), true,
+  'a Sunday-only group opens on Sunday');
+select is(public.day_opens_today('custom', 'UTC', '2026-09-21T12:00:00Z', array[7]), false,
+  'and rests every other day');
+
 -- An unusable timezone must not stall a group forever.
 select is(public.day_opens_today('weekdays', 'Not/AZone', '2026-09-21T12:00:00Z'), true,
   'a bad timezone falls back to UTC rather than blocking');
@@ -49,8 +67,8 @@ insert into groups (id, name, plan_challenge_id, created_by, challenge_status, f
    '11111111-1111-1111-1111-111111111111', 'active', 'daily', 'UTC');
 
 insert into day_instances (group_id, day_index, date, passage_ref, opened_at, status) values
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1, '2026-09-24', 'HEB.6.19', '2026-09-25T09:00:00Z', 'threshold_met'),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 1, '2026-09-24', 'HEB.6.19', '2026-09-25T09:00:00Z', 'threshold_met');
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1, '2026-09-24', 'PSA.34.18', '2026-09-25T09:00:00Z', 'threshold_met'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 1, '2026-09-24', 'PSA.34.18', '2026-09-25T09:00:00Z', 'threshold_met');
 
 -- Saturday: the weekday group rests, the daily group moves on.
 select public.open_ready_next_days('2026-09-26T10:00:00Z');
@@ -69,7 +87,7 @@ select public.open_ready_next_days('2026-09-28T10:00:00Z');
 
 select is((select passage_ref from day_instances
            where group_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and day_index = 2),
-  'ISA.40.31', 'the weekday group picks up again on Monday');
+  'ISA.43.2', 'the weekday group picks up again on Monday');
 
 select * from finish();
 rollback;

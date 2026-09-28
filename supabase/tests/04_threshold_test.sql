@@ -32,7 +32,7 @@ insert into group_members (group_id, user_id, joined_at) values
 
 insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at)
 values ('dddddddd-aaaa-aaaa-aaaa-dddddddddddd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        1, current_date, 'HEB.6.19', now() - interval '1 day');
+        1, current_date, 'PSA.34.18', now() - interval '1 day');
 
 insert into reflections (id, user_id, day_instance_id, media_type, language) values
   ('eeeeeeee-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111',
@@ -79,7 +79,7 @@ insert into group_members (group_id, user_id, joined_at) values
 
 insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at)
 values ('dddddddd-bbbb-bbbb-bbbb-dddddddddddd', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-        1, current_date, 'HEB.6.19', now() - interval '1 day');
+        1, current_date, 'PSA.34.18', now() - interval '1 day');
 
 insert into reflections (id, user_id, day_instance_id, media_type, language) values
   ('eeeeeeee-4444-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444',
@@ -104,7 +104,7 @@ insert into group_members (group_id, user_id, joined_at) values
 
 insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at)
 values ('dddddddd-cccc-cccc-cccc-dddddddddddd', 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-        1, current_date, 'HEB.6.19', now() - interval '1 day');
+        1, current_date, 'PSA.34.18', now() - interval '1 day');
 
 insert into reflections (id, user_id, day_instance_id, media_type, language) values
   ('eeeeeeee-1111-cccc-cccc-111111111111', '11111111-1111-1111-1111-111111111111',

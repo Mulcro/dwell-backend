@@ -147,6 +147,57 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(group!.timezone, "America/New_York");
     });
 
+    await t.step("create-group takes the redesign's rhythms", async () => {
+      const four = await createGroup({
+        name: "Four Crew",
+        plan_challenge_id: SEED_PLAN_ID,
+        frequency: "four_per_week",
+        timezone: "UTC",
+      }, alice.token);
+      assertEquals(four.status, 201);
+      groupIds.push((await four.json()).group_id);
+
+      const custom = await createGroup({
+        name: "Custom Crew",
+        plan_challenge_id: SEED_PLAN_ID,
+        frequency: "custom",
+        timezone: "UTC",
+        custom_days: [2, 4, 6],
+      }, alice.token);
+      assertEquals(custom.status, 201);
+      const customId = (await custom.json()).group_id;
+      groupIds.push(customId);
+
+      const { data: group } = await db
+        .from("groups").select("frequency, custom_days").eq("id", customId).single();
+      assertEquals(group!.frequency, "custom");
+      assertEquals(group!.custom_days, [2, 4, 6]);
+
+      // custom without days would never open another day; the other rhythms already
+      // carry their own pattern, so a mask alongside them is a contradiction.
+      const noDays = await createGroup(
+        { name: "No Days", plan_challenge_id: SEED_PLAN_ID, frequency: "custom" },
+        alice.token,
+      );
+      assertEquals(noDays.status, 400);
+
+      const bothWays = await createGroup({
+        name: "Both",
+        plan_challenge_id: SEED_PLAN_ID,
+        frequency: "daily",
+        custom_days: [1],
+      }, alice.token);
+      assertEquals(bothWays.status, 400);
+
+      const badDay = await createGroup({
+        name: "Bad Day",
+        plan_challenge_id: SEED_PLAN_ID,
+        frequency: "custom",
+        custom_days: [0, 9],
+      }, alice.token);
+      assertEquals(badDay.status, 400);
+    });
+
     await t.step("join-group rejects an unknown invite", async () => {
       const res = await joinGroup({ invite_token: "nope" }, bob.token);
       assertEquals(res.status, 404);
@@ -165,7 +216,7 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(days!.length, 1);
       assertEquals(days![0].day_index, 1);
       // Day 1's passage comes from the plan, not from anything the client sent.
-      assertEquals(days![0].passage_ref, "HEB.6.19");
+      assertEquals(days![0].passage_ref, "PSA.34.18");
       assertEquals(days![0].status, "open");
       dayInstanceId = days![0].id;
     });

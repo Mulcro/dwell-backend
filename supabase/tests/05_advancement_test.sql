@@ -28,12 +28,12 @@ insert into groups (id, name, plan_challenge_id, created_by, challenge_status) v
    '00000000-0000-0000-0000-0000000000a1', '11111111-1111-1111-1111-111111111111', 'paused');
 
 insert into day_instances (group_id, day_index, date, passage_ref, opened_at, status) values
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1, current_date, 'HEB.6.19', now() - interval '1 hour', 'threshold_met'),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 1, current_date, 'HEB.6.19', now() - interval '2 days', 'open'),
-  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 1, current_date, 'HEB.6.19', now() - interval '25 hours', 'threshold_met'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1, current_date, 'PSA.34.18', now() - interval '1 hour', 'threshold_met'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 1, current_date, 'PSA.34.18', now() - interval '2 days', 'open'),
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 1, current_date, 'PSA.34.18', now() - interval '25 hours', 'threshold_met'),
   -- day 7 of a 7-day plan: clearing it ends the challenge rather than opening day 8
   ('dddddddd-dddd-dddd-dddd-dddddddddddd', 7, current_date, 'REV.21.4-5', now() - interval '25 hours', 'threshold_met'),
-  ('ffffffff-ffff-ffff-ffff-ffffffffffff', 1, current_date, 'HEB.6.19', now() - interval '25 hours', 'threshold_met');
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', 1, current_date, 'PSA.34.18', now() - interval '25 hours', 'threshold_met');
 
 select public.open_ready_next_days();
 
@@ -56,7 +56,7 @@ select is((select status::text from day_instances
   'complete', 'the cleared day is marked complete');
 select is((select passage_ref from day_instances
            where group_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc' and day_index = 2),
-  'ISA.40.31', 'the next passage is copied from the plan');
+  'ISA.43.2', 'the next passage is copied from the plan');
 select is((select status::text from day_instances
            where group_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc' and day_index = 2),
   'open', 'the next day opens');

@@ -82,7 +82,7 @@ async function makeGroup(
       group_id: group!.id,
       day_index: options.dayIndex ?? 1,
       date: new Date().toISOString().slice(0, 10),
-      passage_ref: "HEB.6.19",
+      passage_ref: "PSA.34.18",
       opened_at: ago(options.openedAgo ?? HOUR),
       status: options.dayStatus ?? "open",
       consecutive_below_threshold_count: options.belowCount ?? 0,
@@ -204,7 +204,7 @@ Deno.test("system-triggered functions", async (t) => {
         group_id: f.groupId,
         day_index: 2,
         date: new Date().toISOString().slice(0, 10),
-        passage_ref: "ISA.40.31",
+        passage_ref: "ISA.43.2",
       }).select("id").single();
       await addReflection(db, day2!.id, alice, "approved");
 
@@ -261,7 +261,7 @@ Deno.test("system-triggered functions", async (t) => {
         .from("day_instances")
         .select("day_index, passage_ref, status")
         .eq("group_id", f.groupId).eq("day_index", 2).single();
-      assertEquals(next!.passage_ref, "ISA.40.31");
+      assertEquals(next!.passage_ref, "ISA.43.2");
       assertEquals(next!.status, "open");
     });
 

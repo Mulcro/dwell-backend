@@ -29,13 +29,13 @@ import {
 
 /** The seeded 7-day plan, in order. Advancement must follow exactly this. */
 const PLAN_PASSAGES = [
-  "HEB.6.19",
-  "ISA.40.31",
-  "ROM.5.3-5",
-  "LAM.3.22-23",
+  "PSA.34.18",
+  "ISA.43.2",
   "ROM.8.28",
-  "1PE.3.15",
-  "REV.21.4-5",
+  "2CO.4.16-18",
+  "PSA.23.4",
+  "JAS.1.2-4",
+  "REV.21.4",
 ];
 
 const LOCAL_URL = "http://127.0.0.1:54321";

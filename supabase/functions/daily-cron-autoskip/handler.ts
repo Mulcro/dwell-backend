@@ -17,6 +17,7 @@ interface ShortDay {
     plan_challenge_id: string;
     frequency: string;
     timezone: string;
+    custom_days: number[] | null;
   };
 }
 
@@ -46,7 +47,7 @@ export async function handleDailyCronAutoskip(
     .select(
       "id, group_id, day_index, consecutive_below_threshold_count, last_autoskip_on, " +
         "groups!inner(auto_skip_after_days, challenge_status, plan_challenge_id, " +
-        "frequency, timezone)",
+        "frequency, timezone, custom_days)",
     )
     .eq("status", "open")
     .eq("groups.challenge_status", "active")
@@ -75,6 +76,7 @@ export async function handleDailyCronAutoskip(
       p_frequency: group.frequency,
       p_timezone: group.timezone,
       p_at: now.toISOString(),
+      p_custom_days: group.custom_days,
     });
     if (opensToday === false) continue;
 

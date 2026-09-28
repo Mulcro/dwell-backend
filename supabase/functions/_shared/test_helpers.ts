@@ -226,7 +226,7 @@ export async function waitForRealtime(timeoutMs = 60_000): Promise<void> {
       group_id: group!.id,
       day_index: 1,
       date: new Date().toISOString().slice(0, 10),
-      passage_ref: "HEB.6.19",
+      passage_ref: "PSA.34.18",
     })
     .select("id")
     .single();

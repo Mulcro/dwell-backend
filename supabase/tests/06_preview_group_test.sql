@@ -15,7 +15,7 @@ set local role anon;
 select is((select name from public.preview_group('test-token-01')),
   'Morning Crew', 'a valid invite token returns the group name');
 select is((select plan_title from public.preview_group('test-token-01')),
-  'Anchored: A 7-Day Journey Through Hope', 'and the plan title');
+  'When Life Gets Hard', 'and the plan title');
 
 -- A wrong or expired token reveals nothing, and must not error either: the invite page
 -- needs to render a plain "not found" rather than a stack trace.

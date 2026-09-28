@@ -21,7 +21,7 @@ insert into group_members (group_id, user_id, joined_at) values
 
 insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at)
 values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        1, current_date, 'HEB.6.19', now() - interval '1 day');
+        1, current_date, 'PSA.34.18', now() - interval '1 day');
 
 insert into reflections (id, user_id, day_instance_id, media_type, content, language, moderation_status) values
   ('eeeeeeee-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111',

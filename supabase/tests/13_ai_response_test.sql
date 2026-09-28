@@ -15,7 +15,7 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'G',
         '00000000-0000-0000-0000-0000000000a1', '11111111-1111-1111-1111-111111111111');
 insert into day_instances (id, group_id, day_index, date, passage_ref)
 values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        1, current_date, 'HEB.6.19');
+        1, current_date, 'PSA.34.18');
 insert into reflections (user_id, day_instance_id, media_type, content, language,
                          translated_text, ai_response)
 values ('11111111-1111-1111-1111-111111111111', 'dddddddd-dddd-dddd-dddd-dddddddddddd',
