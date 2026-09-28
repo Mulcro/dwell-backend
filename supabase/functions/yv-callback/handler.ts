@@ -1,25 +1,48 @@
 /**
- * GET /yv-callback?code=...&state=...
+ * GET /yv-callback  -- the redirect target registered with YouVersion.
  *
- * Bounces YouVersion's redirect into the app.
+ * Two problems are solved here, and they are unrelated to each other.
  *
- * YouVersion only accepts https redirect URIs -- a custom scheme is rejected at
- * registration -- but an https URL cannot reach an iOS app without Universal Links,
- * which needs a domain we own, an apple-app-site-association file and an Apple Team ID.
- * This relay sidesteps all three: it is an https URL on a domain we already control, and
- * it 302s straight to the app's scheme, which ASWebAuthenticationSession catches.
+ * 1. YouVersion only accepts https redirect URIs; a custom scheme is refused at
+ *    registration. But an https URL cannot reach an iOS app without Universal Links,
+ *    which needs a domain we own, an apple-app-site-association file and an Apple Team
+ *    ID. This is an https URL on a domain we already control that 302s to the app's
+ *    scheme, which ASWebAuthenticationSession catches.
  *
- * The destination is hardcoded on purpose. Taking it from a query parameter would make
- * this an open redirect that forwards a live authorization code anywhere.
+ * 2. Their sign-in is a THREE-step flow, not the usual two. The first callback carries
+ *    only `state` -- deliberately, so identity never rides on a browser-facing URL. The
+ *    state must be replayed to /auth/callback, which answers with a redirect that finally
+ *    carries `code`. Doing that replay here keeps the whole dance server-side, so the app
+ *    only ever sees a normal `?code=` arrival.
  */
 const APP_SCHEME_URL = "dwell://auth-callback";
+const YV_CALLBACK = "https://api.youversion.com/auth/callback";
 
 /** Only what the OAuth response is allowed to carry. */
 const FORWARDED = ["code", "state", "error", "error_description", "granted_permissions"];
 
-export function handleYvCallback(req: Request, destination = APP_SCHEME_URL): Response {
+export function handleYvCallback(
+  req: Request,
+  destination = APP_SCHEME_URL,
+  replayUrl = YV_CALLBACK,
+): Response {
   const incoming = new URL(req.url).searchParams;
+  const code = incoming.get("code");
+  const error = incoming.get("error");
+  const state = incoming.get("state");
 
+  // Step two: state came back without a code, and nothing failed. Replay it to
+  // YouVersion, which redirects straight back here with the code attached.
+  if (!code && !error && state) {
+    const replay = new URL(replayUrl);
+    replay.searchParams.set("state", state);
+    const granted = incoming.get("granted_permissions");
+    if (granted) replay.searchParams.set("granted_permissions", granted);
+
+    return redirect(replay.toString(), "Finishing sign-in…");
+  }
+
+  // Step three: the code is here (or the attempt failed). Hand it to the app.
   const forwarded = new URLSearchParams();
   for (const key of FORWARDED) {
     const value = incoming.get(key);
@@ -27,13 +50,19 @@ export function handleYvCallback(req: Request, destination = APP_SCHEME_URL): Re
   }
 
   const target = forwarded.size > 0 ? `${destination}?${forwarded}` : destination;
+  return redirect(target, "Returning to Dwell…");
+}
 
-  // 302 with a tiny body: if the OS does not follow the scheme automatically, the page
-  // still offers a tap target rather than showing a blank screen.
+/**
+ * 302 with a small body: if the OS does not follow the scheme on its own, the page still
+ * offers a tap target rather than a blank screen.
+ */
+function redirect(target: string, message: string): Response {
+  const safe = escapeHtml(target);
   return new Response(
     `<!doctype html><meta charset="utf-8">` +
-      `<meta http-equiv="refresh" content="0;url=${escapeHtml(target)}">` +
-      `<p>Returning to Dwell… <a href="${escapeHtml(target)}">tap here</a> if nothing happens.</p>`,
+      `<meta http-equiv="refresh" content="0;url=${safe}">` +
+      `<p>${message} <a href="${safe}">tap here</a> if nothing happens.</p>`,
     {
       status: 302,
       headers: {
