@@ -9,7 +9,7 @@ Technical design for Dwell's backend — written to be handed directly to **Clau
 | **Layer** | **Choice** |
 | --- | --- |
 | Client | Swift + SwiftUI (solo build) |
-| Auth | MVP: standard OAuth (Apple/Google) via Supabase Auth, to unblock the core build. YouVersion login via Supabase's Custom OIDC Provider is a fast-follow, added as an option later (see 2) |
+| Auth | Google (live) and email/password via Supabase Auth; YouVersion sign-in via a verification bridge, built and verified (see 2). Apple is not yet configured -- it needs a paid Apple Developer membership |
 | Database | Supabase Postgres |
 | Realtime | Supabase Realtime — client subscribes directly to table changes, no custom socket/polling layer |
 | Compute | Supabase Edge Functions (TypeScript/Deno) |
@@ -83,13 +83,46 @@ Pub/sub, not request/response — the client subscribes once and receives pushes
 
 **MVP decision (9/20): ship standard OAuth first.** For the hackathon build we use a standard Supabase Auth provider (Sign in with Apple and/or Google) so the core loop is unblocked immediately, and we add YouVersion login as an option later. The YouVersion Custom OIDC plan below is that fast-follow, kept here so it is ready to slot in; it does not block anything else in this doc. handle_new_auth_user, the users-row seeding, and the post-login profile update all work the same regardless of which provider issued the session.
 
-**YouVersion (fast-follow). Decision: Supabase's Custom OIDC Provider feature, not a hand-rolled JWT bridge.** YouVersion's SDK already implements OAuth 2.0 + PKCE and issues an id_token (JWT) under the openid scope — exactly the shape Supabase's custom-provider integration expects. Supabase Auth handles the whole exchange and hands back a normal session; there's no separate token-bridging function.
+**YouVersion sign-in: BUILT and verified end to end (2026-09-28).** The Custom OIDC
+Provider plan below was abandoned once the provider was actually probed. Three findings
+killed it, all confirmed against their live endpoints:
 
-1. In the YouVersion Developer Dashboard, register an OAuth client for Dwell with its redirect URI set to the Supabase callback URL (https://<project-ref>.[supabase.co/auth/v1/callback](http://supabase.co/auth/v1/callback)) — not the app's own URL scheme.
-2. In Supabase Dashboard → Authentication → Sign In / Providers → Custom Providers → New Provider: identifier custom:youversion, Auto-discovery (OIDC) if YouVersion publishes {issuer}/.well-known/openid-configuration (confirm first; fall back to manual OAuth2 endpoints if not), Client ID/Secret from step 1 (flag: YouVersion's PKCE-for-public-clients framing sometimes means no secret is issued — check whether Supabase's form accepts an empty one before assuming this path is blocked), scopes openid profile email.
-3. Client-side (Swift): try await supabase.auth.signInWithOAuth(provider: .custom("youversion")) — opens YouVersion's real hosted sign-in page via ASWebAuthenticationSession, returns a normal Supabase session on success.
-4. First sign-in triggers handle_new_auth_user (Database section) to create the matching public.users row.
-5. Immediately after, the client does a direct PostgREST update on its own users row to set the real timezone (TimeZone.current.identifier), preferred_language (from the device locale, editable later in Settings), and the APNs push_token — the trigger only seeds 'UTC' and 'en' as placeholders. preferred_language is what the translation step in /submit-reflection targets for each group member, so it has to be real, not left at default.
+1. **They are a PKCE public client and issue no client secret.** Supabase's custom
+   provider performs a confidential-client exchange and never sends a `code_verifier`,
+   so it cannot complete their token exchange.
+2. **Their OIDC discovery document is stale.** It advertises
+   `login.youversion.com/auth/authorize` (404) and an issuer whose own
+   `/.well-known/openid-configuration` returns a 401 OAuth fault, so auto-discovery
+   cannot work. The live endpoints are on `api.youversion.com`.
+3. **Sign-in has three legs, not two.** The first callback is deliberately state-only --
+   "identity is bound server-side and the browser-facing callback carries only `state`".
+   The state must be replayed to `/auth/callback` before an authorization code exists.
+
+What is deployed instead:
+
+- The app runs YouVersion's own PKCE flow. `client_id` is the existing
+  `YOUVERSION_APP_KEY`; no separate OAuth client exists or is needed.
+- Registered redirect URI is `/functions/v1/yv-callback`, because **YouVersion only
+  accepts https redirect URIs** -- a custom scheme is refused at registration. That
+  function performs the state replay, then 302s to `dwell://auth-callback?code=...`,
+  which `ASWebAuthenticationSession` catches. This avoids needing a domain we own,
+  an apple-app-site-association file, and an Apple Team ID.
+- The app exchanges the code for an `id_token` and posts it to
+  `/functions/v1/youversion-signin`, which verifies it against their live JWKS, pins the
+  audience to our client id, optionally checks the nonce, then finds or creates the user
+  and returns a single-use `token_hash`. The client redeems that with `verifyOtp` for an
+  ordinary Supabase session.
+- Because the user gets a real `auth.users` row, `handle_new_auth_user` seeds their
+  profile and every RLS policy downstream works unchanged.
+
+**The `iss` claim on real tokens is `https://api.youversion.com/auth/token`** -- the
+discovery document's value, NOT the `https://api.youversion.com` their sign-in docs
+state. Both are accepted, because the two sources disagree and only real tokens settled
+it. Pinning to the documented value alone would reject every live sign-in.
+
+Verified 2026-09-28 with a real account: sign-in, consent, state replay, code issue,
+token exchange, JWKS verification, session redemption, and an authenticated PostgREST
+read under RLS.
 
 Note: only HighlightsClient in YouVersion's own SDK requires authentication — Passages/Audio content calls are unauthenticated. This bridge exists purely to establish our own user identity, not as a prerequisite for reading Bible content.
 

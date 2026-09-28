@@ -21,13 +21,10 @@ const YV_CALLBACK = "https://api.youversion.com/auth/callback";
 /** Only what the OAuth response is allowed to carry. */
 const FORWARDED = ["code", "state", "error", "error_description", "granted_permissions"];
 
-export type DebugRecorder = (leg: string, paramNames: string[]) => void;
-
 export function handleYvCallback(
   req: Request,
   destination = APP_SCHEME_URL,
   replayUrl = YV_CALLBACK,
-  record?: DebugRecorder,
 ): Response {
   const incoming = new URL(req.url).searchParams;
   const code = incoming.get("code");
@@ -46,8 +43,6 @@ export function handleYvCallback(
     // the whitelist below exists for the app-bound leg, where it is doing a different job.
     for (const [key, value] of incoming) replay.searchParams.set(key, value);
 
-    // Names only; these values are live sign-in credentials.
-    record?.("replay", [...incoming.keys()]);
     return redirect(replay.toString(), "Finishing sign-in…");
   }
 
@@ -57,8 +52,6 @@ export function handleYvCallback(
     const value = incoming.get(key);
     if (value !== null) forwarded.set(key, value);
   }
-
-  record?.(code ? "code" : error ? "error" : "bare", [...incoming.keys()]);
 
   const target = forwarded.size > 0 ? `${destination}?${forwarded}` : destination;
   return redirect(target, "Returning to Dwell…");

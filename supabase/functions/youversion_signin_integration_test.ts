@@ -102,6 +102,14 @@ Deno.test("youversion sign-in bridge", async (t) => {
       assertEquals(data.session?.user.id, userId);
     });
 
+    await t.step("an empty nonce means unbound, not 'must be empty'", async () => {
+      // Sending nonce: "" once rejected a perfectly good token, because an empty string
+      // was compared literally against the claim.
+      const req = post({ id_token: await idToken(email), nonce: "" });
+      const res = await invoke(() => handleYouVersionSignIn(req, db, CLIENT_ID, publicKey));
+      assertEquals(res.status, 200);
+    });
+
     await t.step("a token carrying no email is refused before any write", async () => {
       const res = await signIn({ id_token: await idToken("") });
       assertEquals(res.status, 422);

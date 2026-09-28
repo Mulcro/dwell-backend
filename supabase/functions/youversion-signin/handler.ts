@@ -25,7 +25,10 @@ export async function handleYouVersionSignIn(
 ): Promise<Response> {
   const body = await readJson<Record<string, unknown>>(req);
   const idToken = requireString(body, "id_token");
-  const nonce = typeof body.nonce === "string" ? body.nonce : undefined;
+  // An empty string means the client did not bind a nonce, not that the token must
+  // carry an empty one -- treating it literally rejects every real token.
+  const rawNonce = typeof body.nonce === "string" ? body.nonce.trim() : "";
+  const nonce = rawNonce === "" ? undefined : rawNonce;
 
   const identity = await verifyIdToken(idToken, clientId, { keys, nonce });
 
