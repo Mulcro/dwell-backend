@@ -35,10 +35,16 @@ export function handleYvCallback(
   // YouVersion, which redirects straight back here with the code attached.
   if (!code && !error && state) {
     const replay = new URL(replayUrl);
-    replay.searchParams.set("state", state);
-    const granted = incoming.get("granted_permissions");
-    if (granted) replay.searchParams.set("granted_permissions", granted);
 
+    // Everything we were handed goes back, not just `state`. Their flow carries its own
+    // session context (a `__yvii` identifier appears mid-flow), and dropping anything we
+    // do not recognise gets the replay rejected as an invalid state. This is safe to do
+    // here precisely because the destination is hardcoded to YouVersion's own endpoint --
+    // the whitelist below exists for the app-bound leg, where it is doing a different job.
+    for (const [key, value] of incoming) replay.searchParams.set(key, value);
+
+    // Names only; these values are live sign-in credentials.
+    console.log("yv-callback replaying state, params:", [...incoming.keys()].join(","));
     return redirect(replay.toString(), "Finishing sign-in…");
   }
 
