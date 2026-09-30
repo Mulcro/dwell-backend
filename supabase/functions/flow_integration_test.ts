@@ -342,6 +342,64 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(count, 0);
     });
 
+    await t.step("a voice reflection carries its recording", async () => {
+      // The upload itself is Supabase's code and is verified against the hosted project;
+      // what matters here is that everything the client CLAIMS about the object is
+      // checked before it is attached to a reflection.
+      const path = `${bob.id}/${crypto.randomUUID()}.m4a`;
+      const store = { exists: (p: string) => Promise.resolve(p === path) };
+      const withMedia = {
+        day_instance_id: dayInstanceId,
+        media_type: "voice",
+        transcript: "Bob speaking aloud.",
+        language: "en",
+        media_path: path,
+        media_mime: "audio/mp4",
+        media_duration_seconds: 42,
+      };
+      const send = (body: unknown, token: string) =>
+        invoke(() => handleSubmitReflection(post(body, token), db, fakeAi(), store));
+
+      // Claiming a group-mate's upload as your own must fail on ownership, not slip
+      // through because the path merely looks plausible.
+      assertEquals(
+        (await send({ ...withMedia, media_path: `${alice.id}/not-mine.m4a` }, bob.token)).status,
+        403,
+      );
+      // A path pointing at nothing would leave a permanently broken play button.
+      assertEquals(
+        (await send({ ...withMedia, media_path: `${bob.id}/never-uploaded.m4a` }, bob.token))
+          .status,
+        404,
+      );
+      // Audio with no transcript could not be moderated, translated or summarised.
+      assertEquals((await send({ ...withMedia, transcript: undefined }, bob.token)).status, 400);
+      assertEquals(
+        (await send({ ...withMedia, media_duration_seconds: 300 }, bob.token)).status,
+        400,
+      );
+      assertEquals((await send({ ...withMedia, media_mime: "video/mp4" }, bob.token)).status, 400);
+      assertEquals(
+        (await send({ ...withMedia, media_type: "text", content: "hi" }, bob.token)).status,
+        400,
+      );
+
+      const ok = await send(withMedia, bob.token);
+      assertEquals(ok.status, 200);
+      const body = await ok.json();
+      assertEquals(body.moderation_status, "approved");
+
+      const { data: row } = await db
+        .from("reflections")
+        .select("media_path, media_mime, media_duration_seconds")
+        .eq("id", body.reflection_id)
+        .single();
+      assertEquals(row!.media_path, path);
+      assertEquals(row!.media_duration_seconds, 42);
+
+      await db.from("reflections").delete().eq("id", body.reflection_id);
+    });
+
     await t.step("one reflection per person per day", async () => {
       const res = await submit(
         { day_instance_id: dayInstanceId, media_type: "text", content: "again", language: "en" },

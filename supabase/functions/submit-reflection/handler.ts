@@ -1,14 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
-import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
+import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
 import type { Ai } from "../_shared/openai.ts";
 
 const POSTABLE_STATUSES = ["open", "threshold_met"];
 const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+const MEDIA_BUCKET = "reflection-media";
+const MAX_AUDIO_SECONDS = 120;
+const AUDIO_MIME = ["audio/mp4", "audio/m4a", "audio/aac", "audio/mpeg", "audio/wav"];
+
 /**
  * POST /submit-reflection
- * { day_instance_id, media_type, content?, transcript?, language }
+ * { day_instance_id, media_type, content?, transcript?, language,
+ *   media_path?, media_mime?, media_duration_seconds? }
  *   -> { reflection_id, moderation_status, is_late }
  *
  * Moderation is the gate, and it runs before anything else. The row is inserted as
@@ -16,10 +21,40 @@ const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * check_day_threshold. Flagged content stops here: it stays hidden, never reaches the
  * generation call, and never counts toward the day.
  */
+/**
+ * Whether an uploaded object is really in the bucket.
+ *
+ * Injected rather than called inline so the validation around it can be tested without a
+ * working Storage service -- the local stack's storage-api cannot complete an upload
+ * (its own schema is missing the index its UPSERT infers against), while the hosted one
+ * is fine.
+ */
+export interface MediaStore {
+  exists(path: string): Promise<boolean>;
+}
+
+export function supabaseMediaStore(db: SupabaseClient): MediaStore {
+  return {
+    async exists(path) {
+      const slash = path.indexOf("/");
+      const { data, error } = await db.storage
+        .from(MEDIA_BUCKET)
+        .list(path.slice(0, slash), { search: path.slice(slash + 1), limit: 100 });
+
+      if (error) {
+        console.error("could not inspect the upload", error);
+        throw new HttpError(500, "Could not read the recording");
+      }
+      return (data ?? []).some((o: { name: string }) => o.name === path.slice(slash + 1));
+    },
+  };
+}
+
 export async function handleSubmitReflection(
   req: Request,
   db: SupabaseClient,
   ai: Ai,
+  media_store?: MediaStore,
 ): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
@@ -42,6 +77,16 @@ export async function handleSubmitReflection(
     );
   }
 
+  // A recording is optional even for voice: the transcript is what the day counts and
+  // what moderation reads, so a failed upload degrades to text rather than blocking.
+  const media = await validateMedia(
+    media_store ?? supabaseMediaStore(db),
+    body,
+    userId,
+    mediaType,
+    transcript,
+  );
+
   const day = await loadPostableDay(db, dayInstanceId, userId);
 
   const { data: inserted, error: insertError } = await db
@@ -53,6 +98,7 @@ export async function handleSubmitReflection(
       content,
       transcript,
       language,
+      ...media,
     })
     .select("id")
     .single();
@@ -228,4 +274,61 @@ function buildTranslations(
     }
   }
   return Object.keys(payload).length > 0 ? payload : null;
+}
+
+/**
+ * Checks an uploaded recording before it is attached to a reflection.
+ *
+ * The client uploads straight to Storage before this function runs, so everything about
+ * the object is claimed rather than observed until it is checked here. In particular the
+ * path is proof of nothing on its own: without the ownership check below, any member
+ * could attach a group-mate's upload to their own reflection and pass it off as theirs.
+ */
+async function validateMedia(
+  store: MediaStore,
+  body: Record<string, unknown>,
+  userId: string,
+  mediaType: string,
+  transcript: string | null,
+): Promise<Record<string, unknown>> {
+  if (body.media_path === undefined || body.media_path === null) return {};
+
+  const path = requireString(body, "media_path");
+
+  if (mediaType === "text") {
+    throw new HttpError(400, "A text reflection cannot carry a recording");
+  }
+  // Moderation, translation and the group pulse all read the transcript. Storing audio
+  // without one would put unreadable, unmoderated content in front of the group.
+  if (!transcript) {
+    throw new HttpError(400, "transcript is required when sending a recording");
+  }
+
+  // Ownership is decided by the path prefix, which is also what the storage policy
+  // enforces on upload -- so the two agree on who owns what.
+  if (!path.startsWith(`${userId}/`) || path.includes("..")) {
+    throw new HttpError(403, "That recording does not belong to you");
+  }
+
+  const mime = requireString(body, "media_mime");
+  if (!AUDIO_MIME.includes(mime)) {
+    throw new HttpError(400, `media_mime must be one of: ${AUDIO_MIME.join(", ")}`);
+  }
+
+  const duration = optionalInt(body, "media_duration_seconds", 1, MAX_AUDIO_SECONDS);
+  if (duration === undefined) {
+    throw new HttpError(400, "media_duration_seconds is required when sending a recording");
+  }
+
+  // The object must actually be there. A path pointing at nothing would produce a
+  // reflection with a permanently broken play button.
+  if (!await store.exists(path)) {
+    throw new HttpError(404, "That recording was not found. Upload it before posting.");
+  }
+
+  return {
+    media_path: path,
+    media_mime: mime,
+    media_duration_seconds: duration,
+  };
 }

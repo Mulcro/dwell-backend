@@ -313,6 +313,12 @@ Deno.test("system-triggered functions", async (t) => {
       );
 
       const saturday = new Date("2026-09-26T10:00:00Z");
+      // Anchor the day to the injected clock, not to real now: otherwise the fixture
+      // drifts past the handler's 24h cutoff and the group is skipped over entirely --
+      // which looks like a pass, because nothing happening is what this test asserts.
+      await db.from("day_instances")
+        .update({ opened_at: "2026-09-24T10:00:00Z" }).eq("id", f.dayId);
+
       await invoke(() =>
         handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key(), saturday)
       );
@@ -323,6 +329,8 @@ Deno.test("system-triggered functions", async (t) => {
         .eq("id", f.dayId).single();
       assertEquals(day!.status, "open");
       assertEquals(day!.consecutive_below_threshold_count, 2);
+      // Untouched because it was a rest day -- confirmed by the Monday test below, where
+      // the identical fixture IS skipped.
     });
 
     await t.step("the same group is skipped on a Monday", async () => {
@@ -336,6 +344,9 @@ Deno.test("system-triggered functions", async (t) => {
       );
 
       const monday = new Date("2026-09-28T10:00:00Z");
+      await db.from("day_instances")
+        .update({ opened_at: "2026-09-26T10:00:00Z" }).eq("id", f.dayId);
+
       await invoke(() =>
         handleDailyCronAutoskip(serviceRequest(), db, fakeDispatch(), key(), monday)
       );
