@@ -64,11 +64,23 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/daily-c
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" -H 'Content-Type: application/json' -d '{}')
 [ "$code" = "200" ] || fail "daily-cron-autoskip refused the service role (HTTP $code)"
 
+echo "delete-account refuses without the confirmation..."
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/delete-account" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}')
+[ "$code" = "400" ] || fail "delete-account deleted without a confirmation (HTTP $code)"
+
+echo "delete-account erases the caller..."
+code=$(curl -s -o "$workdir/out" -w '%{http_code}' -X POST "$API/functions/v1/delete-account" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d '{"confirm":"DELETE"}')
+[ "$code" = "200" ] || fail "delete-account failed (HTTP $code, $(cat "$workdir/out"))"
+
 curl -s -X DELETE "$API/rest/v1/groups?id=eq.$group" \
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" > /dev/null
 
-# Remove the smoke user too. A leftover auth row changes member counts for any test that
-# counts users, which has already broken one suite.
+# Fallback sweep. delete-account above should already have removed the user; this
+# catches the case where it is the thing that is broken, since a leftover auth row
+# changes member counts for any test that counts users.
 smoke_user=$(curl -s "$API/auth/v1/admin/users?per_page=200" \
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" \
   | python3 -c "
