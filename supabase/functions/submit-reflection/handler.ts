@@ -8,7 +8,13 @@ const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const MEDIA_BUCKET = "reflection-media";
 const MAX_AUDIO_SECONDS = 120;
-const AUDIO_MIME = ["audio/mp4", "audio/m4a", "audio/aac", "audio/mpeg", "audio/wav"];
+const AUDIO_MIME = [
+  "audio/mp4",
+  "audio/m4a",
+  "audio/aac",
+  "audio/mpeg",
+  "audio/wav",
+];
 
 /**
  * POST /submit-reflection
@@ -39,7 +45,10 @@ export function supabaseMediaStore(db: SupabaseClient): MediaStore {
       const slash = path.indexOf("/");
       const { data, error } = await db.storage
         .from(MEDIA_BUCKET)
-        .list(path.slice(0, slash), { search: path.slice(slash + 1), limit: 100 });
+        .list(path.slice(0, slash), {
+          search: path.slice(slash + 1),
+          limit: 100,
+        });
 
       if (error) {
         console.error("could not inspect the upload", error);
@@ -123,9 +132,22 @@ export async function handleSubmitReflection(
     if (flagged) {
       // A deliberate terminal state, not a failure: keep the row so the same content
       // cannot simply be resubmitted, and leave it hidden and uncounted.
+      //
+      // The recording itself is destroyed rather than merely hidden. Storage RLS would
+      // keep it unreadable, but content the group must never hear should not sit in a
+      // bucket depending on a policy staying correct -- and the person who recorded it
+      // has no use for it either. The row keeps the flag; only the audio goes.
+      await discardRecording(db, media);
+
       await db
         .from("reflections")
-        .update({ moderation_status: "flagged" })
+        .update({
+          moderation_status: "flagged",
+          media_path: null,
+          media_mime: null,
+          media_duration_seconds: null,
+          media_peaks: null,
+        })
         .eq("id", reflectionId);
       return json({
         reflection_id: reflectionId,
@@ -254,7 +276,10 @@ async function enrich(
     };
   } catch (err) {
     // Enrichment is a nicety; losing it must never block a reflection from counting.
-    console.error("submit-reflection enrichment failed, approving without it", err);
+    console.error(
+      "submit-reflection enrichment failed, approving without it",
+      err,
+    );
     return { sentiment_tag: null, translated_text: null, ai_response: null };
   }
 }
@@ -312,23 +337,87 @@ async function validateMedia(
 
   const mime = requireString(body, "media_mime");
   if (!AUDIO_MIME.includes(mime)) {
-    throw new HttpError(400, `media_mime must be one of: ${AUDIO_MIME.join(", ")}`);
+    throw new HttpError(
+      400,
+      `media_mime must be one of: ${AUDIO_MIME.join(", ")}`,
+    );
   }
 
-  const duration = optionalInt(body, "media_duration_seconds", 1, MAX_AUDIO_SECONDS);
+  const duration = optionalInt(
+    body,
+    "media_duration_seconds",
+    1,
+    MAX_AUDIO_SECONDS,
+  );
   if (duration === undefined) {
-    throw new HttpError(400, "media_duration_seconds is required when sending a recording");
+    throw new HttpError(
+      400,
+      "media_duration_seconds is required when sending a recording",
+    );
   }
+
+  const peaks = parsePeaks(body.media_peaks);
 
   // The object must actually be there. A path pointing at nothing would produce a
   // reflection with a permanently broken play button.
   if (!await store.exists(path)) {
-    throw new HttpError(404, "That recording was not found. Upload it before posting.");
+    throw new HttpError(
+      404,
+      "That recording was not found. Upload it before posting.",
+    );
   }
 
   return {
     media_path: path,
     media_mime: mime,
     media_duration_seconds: duration,
+    ...(peaks ? { media_peaks: peaks } : {}),
   };
+}
+
+/**
+ * Hands a flagged recording to the deletion queue.
+ *
+ * Queued rather than deleted inline, like account deletion: cleanup-media already
+ * retries until Storage confirms, so a Storage hiccup cannot leave flagged audio behind.
+ * A failure here must not fail the submission -- the reflection is already flagged and
+ * hidden, which is the part that protects the group.
+ */
+async function discardRecording(
+  db: SupabaseClient,
+  media: Record<string, unknown>,
+): Promise<void> {
+  const path = media.media_path;
+  if (typeof path !== "string") return;
+
+  const { error } = await db
+    .from("media_deletions")
+    .upsert({ path }, { onConflict: "path" });
+
+  if (error) {
+    console.error("could not queue a flagged recording for deletion", error);
+  }
+}
+
+/**
+ * Waveform amplitudes drawn by the feed's player, computed on-device while recording.
+ * Optional: a missing waveform costs a flat bar, a wrong one is a broken-looking post.
+ */
+function parsePeaks(value: unknown): number[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 512) {
+    throw new HttpError(400, "media_peaks must be 1 to 512 samples");
+  }
+  for (const peak of value) {
+    if (
+      typeof peak !== "number" || !Number.isInteger(peak) || peak < 0 ||
+      peak > 100
+    ) {
+      throw new HttpError(
+        400,
+        "media_peaks must be whole numbers from 0 to 100",
+      );
+    }
+  }
+  return value as number[];
 }

@@ -7,7 +7,9 @@ import { handleSubmitReflection } from "./handler.ts";
 Deno.serve(async (req) => {
   try {
     const { url, serviceRoleKey } = supabaseConfig();
-    const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+    const db = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
     const ai = createAi(requireEnv("OPENAI_API_KEY"));
     return await handleSubmitReflection(req, db, ai);
   } catch (err) {
