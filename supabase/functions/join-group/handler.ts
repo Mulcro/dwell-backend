@@ -13,7 +13,10 @@ import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
 export async function handleJoinGroup(req: Request, db: SupabaseClient): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
-  const inviteToken = requireString(body, "invite_token");
+  // Forgives how the code was typed -- lower case from a pasted link, and the spaces or
+  // dashes people add reading one out. Must match preview_group's normalization exactly,
+  // or a code could preview fine and then fail to join.
+  const inviteToken = normalizeInviteCode(requireString(body, "invite_token"));
 
   const { data: group } = await db
     .from("groups")
@@ -101,4 +104,9 @@ async function openFirstDay(
     console.error("join-group: could not open day 1", error);
     throw new HttpError(500, "Could not start the challenge");
   }
+}
+
+/** Codes are stored upper-case and alphanumeric; accept any spacing or casing of one. */
+export function normalizeInviteCode(token: string): string {
+  return token.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
 }
