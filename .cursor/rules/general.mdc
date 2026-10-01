@@ -22,4 +22,5 @@ Dwell's backend is Supabase: Postgres, Auth, Realtime, and Edge Functions (TypeS
 - Every Edge Function ships with a `*_test.ts` next to it (`Deno.test`). Every migration that adds logic or RLS ships with a pgTAP test in `supabase/tests/`. Test behavior (threshold math, moderation gating, RLS unlock rules), not implementation.
 - Keep changes minimal: no new code beyond what the task requires.
 - Commit messages are a single line stating the main purpose of the change. No body, no bullet list, and no trailers. Never add yourself as a co-author or contributor.
+- Never push to `main`. Work on a branch and open a PR for review, even for a one-line change. The PR body may carry the detail that commit messages deliberately leave out.
 - Push delivery is stubbed for the MVP. Nudges are written as `ai_insights` rows (type `nudge`, `target_user_id` set), not sent to APNs.
