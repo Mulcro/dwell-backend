@@ -35,7 +35,9 @@ let cachedJwks: KeyResolver | null = null;
 
 function remoteJwks(): KeyResolver {
   // createRemoteJWKSet caches and refreshes on unknown kid, so one per process is right.
-  if (!cachedJwks) cachedJwks = createRemoteJWKSet(new URL(YV_JWKS_URL)) as KeyResolver;
+  if (!cachedJwks) {
+    cachedJwks = createRemoteJWKSet(new URL(YV_JWKS_URL)) as KeyResolver;
+  }
   return cachedJwks;
 }
 

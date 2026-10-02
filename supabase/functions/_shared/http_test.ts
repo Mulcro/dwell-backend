@@ -26,8 +26,16 @@ Deno.test("toErrorResponse hides unexpected failures", async () => {
 Deno.test("readJson rejects non-POST and malformed bodies", async () => {
   assertEquals(await readJson<{ a: number }>(post('{"a":1}')), { a: 1 });
 
-  await assertRejects(() => readJson(new Request("http://x")), HttpError, "Method not allowed");
-  await assertRejects(() => readJson(post("not json")), HttpError, "valid JSON");
+  await assertRejects(
+    () => readJson(new Request("http://x")),
+    HttpError,
+    "Method not allowed",
+  );
+  await assertRejects(
+    () => readJson(post("not json")),
+    HttpError,
+    "valid JSON",
+  );
 });
 
 Deno.test("requireString rejects empty, blank and non-string values", () => {

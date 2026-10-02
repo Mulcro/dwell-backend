@@ -54,7 +54,9 @@ export async function handleDailyCronNudge(
       .eq("day_instance_id", day.id)
       .eq("moderation_status", "approved");
 
-    const postedIds = new Set((posted ?? []).map((r: { user_id: string }) => r.user_id));
+    const postedIds = new Set(
+      (posted ?? []).map((r: { user_id: string }) => r.user_id),
+    );
     // Nobody at all has posted and the window has closed: this is the escalated case.
     const groupIsSilent = postedIds.size === 0 && Date.now() > windowEnds;
 

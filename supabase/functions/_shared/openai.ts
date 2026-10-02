@@ -14,7 +14,21 @@ export interface ModerationResult {
 
 export interface Ai {
   moderate(input: string): Promise<ModerationResult>;
-  generateJson(prompt: string, model?: string): Promise<Record<string, unknown>>;
+  /**
+   * Moderates an image, and any words sent with it, in one call.
+   *
+   * omni-moderation-latest is multimodal: it reports sexual, violent and self-harm
+   * categories for images, which is the whole reason an image can be accepted at all.
+   * The URL is short-lived and signed, so the bucket itself stays private.
+   */
+  moderateImage(
+    imageUrl: string,
+    caption?: string | null,
+  ): Promise<ModerationResult>;
+  generateJson(
+    prompt: string,
+    model?: string,
+  ): Promise<Record<string, unknown>>;
   generateText(prompt: string, model?: string): Promise<string>;
 }
 
@@ -52,6 +66,30 @@ export function createAi(apiKey: string): Ai {
       // letting unmoderated content through the gate.
       if (!results || results.length === 0) return { flagged: true };
       return { flagged: Boolean(results[0].flagged) };
+    },
+
+    async moderateImage(
+      imageUrl: string,
+      caption?: string | null,
+    ): Promise<ModerationResult> {
+      const input: Array<Record<string, unknown>> = [
+        { type: "image_url", image_url: { url: imageUrl } },
+      ];
+      // A caption is moderated alongside the picture rather than in a second call, so
+      // the two are judged together.
+      if (caption && caption.trim() !== "") {
+        input.push({ type: "text", text: caption });
+      }
+
+      const data = await call(apiKey, "moderations", {
+        model: "omni-moderation-latest",
+        input,
+      });
+      const results = data.results as Array<{ flagged: boolean }> | undefined;
+      // Fail closed, exactly as the text path does: an unreadable answer is treated as
+      // flagged rather than letting an unchecked image through.
+      if (!results || results.length === 0) return { flagged: true };
+      return { flagged: results.some((r) => Boolean(r.flagged)) };
     },
 
     async generateJson(prompt: string, model = CLASSIFY_MODEL) {

@@ -92,12 +92,21 @@ export async function handleDailyCronAutoskip(
         })
         .eq("id", day.id);
 
-      await openNextDay(db, dispatch, day.group_id, day.day_index, group.plan_challenge_id);
+      await openNextDay(
+        db,
+        dispatch,
+        day.group_id,
+        day.day_index,
+        group.plan_challenge_id,
+      );
       skipped++;
     } else {
       await db
         .from("day_instances")
-        .update({ consecutive_below_threshold_count: count, last_autoskip_on: today })
+        .update({
+          consecutive_below_threshold_count: count,
+          last_autoskip_on: today,
+        })
         .eq("id", day.id);
       incremented++;
     }

@@ -60,7 +60,10 @@ Deno.test("requireUser resolves the caller from the token", async () => {
     HttpError,
     "Unauthorized",
   );
-  await assertRejects(() => requireUser(new Request("http://x"), auth), HttpError);
+  await assertRejects(
+    () => requireUser(new Request("http://x"), auth),
+    HttpError,
+  );
 });
 
 Deno.test("requireServiceRole accepts any of the project's server-side keys", () => {
@@ -82,6 +85,12 @@ Deno.test("requireServiceRole accepts any of the project's server-side keys", ()
 
 Deno.test("requireServiceRole refuses when no key is configured", () => {
   // An empty list must never degrade into "allow anyone".
-  assertThrows(() => requireServiceRole(withAuth("Bearer anything"), []), HttpError);
-  assertThrows(() => requireServiceRole(withAuth("Bearer anything"), [""]), HttpError);
+  assertThrows(
+    () => requireServiceRole(withAuth("Bearer anything"), []),
+    HttpError,
+  );
+  assertThrows(
+    () => requireServiceRole(withAuth("Bearer anything"), [""]),
+    HttpError,
+  );
 });

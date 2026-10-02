@@ -42,12 +42,18 @@ Deno.test("client-facing functions", async (t) => {
 
   try {
     await t.step("create-group rejects an unauthenticated caller", async () => {
-      const res = await createGroup({ name: "Crew", plan_challenge_id: SEED_PLAN_ID });
+      const res = await createGroup({
+        name: "Crew",
+        plan_challenge_id: SEED_PLAN_ID,
+      });
       assertEquals(res.status, 401);
     });
 
     await t.step("create-group validates its input", async () => {
-      const missingName = await createGroup({ plan_challenge_id: SEED_PLAN_ID }, alice.token);
+      const missingName = await createGroup(
+        { plan_challenge_id: SEED_PLAN_ID },
+        alice.token,
+      );
       assertEquals(missingName.status, 400);
 
       const unknownPlan = await createGroup(
@@ -83,46 +89,57 @@ Deno.test("client-facing functions", async (t) => {
       }
     });
 
-    await t.step("create-group creates a forming group with its creator inside", async () => {
-      const res = await createGroup(
-        { name: "Morning Crew", plan_challenge_id: SEED_PLAN_ID },
-        alice.token,
-      );
-      assertEquals(res.status, 201);
+    await t.step(
+      "create-group creates a forming group with its creator inside",
+      async () => {
+        const res = await createGroup(
+          { name: "Morning Crew", plan_challenge_id: SEED_PLAN_ID },
+          alice.token,
+        );
+        assertEquals(res.status, 201);
 
-      const body = await res.json();
-      groupId = body.group_id;
-      inviteToken = body.invite_token;
-      groupIds.push(groupId);
+        const body = await res.json();
+        groupId = body.group_id;
+        inviteToken = body.invite_token;
+        groupIds.push(groupId);
 
-      const { data: group } = await db
-        .from("groups")
-        .select("challenge_status, created_by")
-        .eq("id", groupId)
-        .single();
-      assertEquals(group!.challenge_status, "forming");
-      assertEquals(group!.created_by, alice.id);
+        const { data: group } = await db
+          .from("groups")
+          .select("challenge_status, created_by")
+          .eq("id", groupId)
+          .single();
+        assertEquals(group!.challenge_status, "forming");
+        assertEquals(group!.created_by, alice.id);
 
-      // A group whose creator is not a member would be invisible to everyone.
-      const { count } = await db
-        .from("group_members")
-        .select("user_id", { count: "exact", head: true })
-        .eq("group_id", groupId);
-      assertEquals(count, 1);
+        // A group whose creator is not a member would be invisible to everyone.
+        const { count } = await db
+          .from("group_members")
+          .select("user_id", { count: "exact", head: true })
+          .eq("group_id", groupId);
+        assertEquals(count, 1);
 
-      assertEquals(typeof inviteToken, "string");
-      assertEquals(inviteToken.length > 0, true);
-    });
+        assertEquals(typeof inviteToken, "string");
+        assertEquals(inviteToken.length > 0, true);
+      },
+    );
 
     await t.step("create-group records the reading rhythm", async () => {
       const bad = await createGroup(
-        { name: "Bad Rhythm", plan_challenge_id: SEED_PLAN_ID, frequency: "hourly" },
+        {
+          name: "Bad Rhythm",
+          plan_challenge_id: SEED_PLAN_ID,
+          frequency: "hourly",
+        },
         alice.token,
       );
       assertEquals(bad.status, 400);
 
       const badZone = await createGroup(
-        { name: "Bad Zone", plan_challenge_id: SEED_PLAN_ID, timezone: "Mars/Olympus" },
+        {
+          name: "Bad Zone",
+          plan_challenge_id: SEED_PLAN_ID,
+          timezone: "Mars/Olympus",
+        },
         alice.token,
       );
       assertEquals(badZone.status, 400);
@@ -169,14 +186,19 @@ Deno.test("client-facing functions", async (t) => {
       groupIds.push(customId);
 
       const { data: group } = await db
-        .from("groups").select("frequency, custom_days").eq("id", customId).single();
+        .from("groups").select("frequency, custom_days").eq("id", customId)
+        .single();
       assertEquals(group!.frequency, "custom");
       assertEquals(group!.custom_days, [2, 4, 6]);
 
       // custom without days would never open another day; the other rhythms already
       // carry their own pattern, so a mask alongside them is a contradiction.
       const noDays = await createGroup(
-        { name: "No Days", plan_challenge_id: SEED_PLAN_ID, frequency: "custom" },
+        {
+          name: "No Days",
+          plan_challenge_id: SEED_PLAN_ID,
+          frequency: "custom",
+        },
         alice.token,
       );
       assertEquals(noDays.status, 400);
@@ -203,23 +225,26 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(res.status, 404);
     });
 
-    await t.step("the second member activates the group and opens Day 1", async () => {
-      const res = await joinGroup({ invite_token: inviteToken }, bob.token);
-      assertEquals(res.status, 200);
-      assertEquals((await res.json()).challenge_status, "active");
+    await t.step(
+      "the second member activates the group and opens Day 1",
+      async () => {
+        const res = await joinGroup({ invite_token: inviteToken }, bob.token);
+        assertEquals(res.status, 200);
+        assertEquals((await res.json()).challenge_status, "active");
 
-      const { data: days } = await db
-        .from("day_instances")
-        .select("id, day_index, passage_ref, status")
-        .eq("group_id", groupId);
+        const { data: days } = await db
+          .from("day_instances")
+          .select("id, day_index, passage_ref, status")
+          .eq("group_id", groupId);
 
-      assertEquals(days!.length, 1);
-      assertEquals(days![0].day_index, 1);
-      // Day 1's passage comes from the plan, not from anything the client sent.
-      assertEquals(days![0].passage_ref, "PSA.34.18");
-      assertEquals(days![0].status, "open");
-      dayInstanceId = days![0].id;
-    });
+        assertEquals(days!.length, 1);
+        assertEquals(days![0].day_index, 1);
+        // Day 1's passage comes from the plan, not from anything the client sent.
+        assertEquals(days![0].passage_ref, "PSA.34.18");
+        assertEquals(days![0].status, "open");
+        dayInstanceId = days![0].id;
+      },
+    );
 
     await t.step("re-joining is a no-op rather than an error", async () => {
       const res = await joinGroup({ invite_token: inviteToken }, bob.token);
@@ -254,12 +279,18 @@ Deno.test("client-facing functions", async (t) => {
         const eighth = await createTestUser(db, "eighth");
         extras.push(eighth);
         users.push(eighth);
-        const full = await joinGroup({ invite_token: inviteToken }, eighth.token);
+        const full = await joinGroup(
+          { invite_token: inviteToken },
+          eighth.token,
+        );
         assertEquals(full.status, 409);
         assertEquals((await full.json()).error, "This group is full");
 
         // A member already inside can still re-tap their invite link.
-        const rejoin = await joinGroup({ invite_token: inviteToken }, extras[0].token);
+        const rejoin = await joinGroup(
+          { invite_token: inviteToken },
+          extras[0].token,
+        );
         assertEquals(rejoin.status, 200);
 
         const { count } = await db
@@ -269,14 +300,22 @@ Deno.test("client-facing functions", async (t) => {
         assertEquals(count, 7);
       } finally {
         for (const u of extras) {
-          await db.from("group_members").delete().eq("user_id", u.id).eq("group_id", groupId);
+          await db.from("group_members").delete().eq("user_id", u.id).eq(
+            "group_id",
+            groupId,
+          );
         }
       }
     });
 
     await t.step("submit-reflection refuses a non-member", async () => {
       const res = await submit(
-        { day_instance_id: dayInstanceId, media_type: "text", content: "hi", language: "en" },
+        {
+          day_instance_id: dayInstanceId,
+          media_type: "text",
+          content: "hi",
+          language: "en",
+        },
         carol.token,
       );
       assertEquals(res.status, 403);
@@ -284,63 +323,79 @@ Deno.test("client-facing functions", async (t) => {
 
     await t.step("submit-reflection requires actual words", async () => {
       const res = await submit(
-        { day_instance_id: dayInstanceId, media_type: "text", content: "   ", language: "en" },
+        {
+          day_instance_id: dayInstanceId,
+          media_type: "text",
+          content: "   ",
+          language: "en",
+        },
         alice.token,
       );
       assertEquals(res.status, 400);
     });
 
-    await t.step("flagged content is hidden and never reaches generation", async () => {
-      const ai = fakeAi({ flagged: true });
-      const res = await submit(
-        { day_instance_id: dayInstanceId, media_type: "text", content: "bad", language: "en" },
-        alice.token,
-        ai,
-      );
-
-      assertEquals(res.status, 200);
-      assertEquals((await res.json()).moderation_status, "flagged");
-      // The expensive, content-handling call must not happen for flagged text.
-      assertEquals(ai.generateCalls, 0);
-
-      const { data: day } = await db
-        .from("day_instances")
-        .select("status, participation_count")
-        .eq("id", dayInstanceId)
-        .single();
-      assertEquals(day!.status, "open");
-      assertEquals(day!.participation_count, 0);
-    });
-
-    await t.step("a failed AI call leaves nothing behind, so the member can retry", async () => {
-      // Without cleanup the pending row would answer every retry with 409 forever.
-      const brokenAi = {
-        moderate: () => Promise.reject(new Error("upstream blip")),
-        generateJson: () => Promise.resolve({}),
-        generateText: () => Promise.resolve(""),
-      };
-
-      const failed = await invoke(() =>
-        handleSubmitReflection(
-          post({
+    await t.step(
+      "flagged content is hidden and never reaches generation",
+      async () => {
+        const ai = fakeAi({ flagged: true });
+        const res = await submit(
+          {
             day_instance_id: dayInstanceId,
             media_type: "text",
-            content: "first attempt",
+            content: "bad",
             language: "en",
-          }, bob.token),
-          db,
-          brokenAi,
-        )
-      );
-      assertEquals(failed.status, 500);
+          },
+          alice.token,
+          ai,
+        );
 
-      const { count } = await db
-        .from("reflections")
-        .select("id", { count: "exact", head: true })
-        .eq("day_instance_id", dayInstanceId)
-        .eq("user_id", bob.id);
-      assertEquals(count, 0);
-    });
+        assertEquals(res.status, 200);
+        assertEquals((await res.json()).moderation_status, "flagged");
+        // The expensive, content-handling call must not happen for flagged text.
+        assertEquals(ai.generateCalls, 0);
+
+        const { data: day } = await db
+          .from("day_instances")
+          .select("status, participation_count")
+          .eq("id", dayInstanceId)
+          .single();
+        assertEquals(day!.status, "open");
+        assertEquals(day!.participation_count, 0);
+      },
+    );
+
+    await t.step(
+      "a failed AI call leaves nothing behind, so the member can retry",
+      async () => {
+        // Without cleanup the pending row would answer every retry with 409 forever.
+        const brokenAi = {
+          moderate: () => Promise.reject(new Error("upstream blip")),
+          generateJson: () => Promise.resolve({}),
+          generateText: () => Promise.resolve(""),
+        };
+
+        const failed = await invoke(() =>
+          handleSubmitReflection(
+            post({
+              day_instance_id: dayInstanceId,
+              media_type: "text",
+              content: "first attempt",
+              language: "en",
+            }, bob.token),
+            db,
+            brokenAi,
+          )
+        );
+        assertEquals(failed.status, 500);
+
+        const { count } = await db
+          .from("reflections")
+          .select("id", { count: "exact", head: true })
+          .eq("day_instance_id", dayInstanceId)
+          .eq("user_id", bob.id);
+        assertEquals(count, 0);
+      },
+    );
 
     await t.step("a voice reflection carries its recording", async () => {
       // The upload itself is Supabase's code and is verified against the hosted project;
@@ -363,24 +418,41 @@ Deno.test("client-facing functions", async (t) => {
       // Claiming a group-mate's upload as your own must fail on ownership, not slip
       // through because the path merely looks plausible.
       assertEquals(
-        (await send({ ...withMedia, media_path: `${alice.id}/not-mine.m4a` }, bob.token)).status,
+        (await send(
+          { ...withMedia, media_path: `${alice.id}/not-mine.m4a` },
+          bob.token,
+        )).status,
         403,
       );
       // A path pointing at nothing would leave a permanently broken play button.
       assertEquals(
-        (await send({ ...withMedia, media_path: `${bob.id}/never-uploaded.m4a` }, bob.token))
+        (await send({
+          ...withMedia,
+          media_path: `${bob.id}/never-uploaded.m4a`,
+        }, bob.token))
           .status,
         404,
       );
       // Audio with no transcript could not be moderated, translated or summarised.
-      assertEquals((await send({ ...withMedia, transcript: undefined }, bob.token)).status, 400);
       assertEquals(
-        (await send({ ...withMedia, media_duration_seconds: 300 }, bob.token)).status,
+        (await send({ ...withMedia, transcript: undefined }, bob.token)).status,
         400,
       );
-      assertEquals((await send({ ...withMedia, media_mime: "video/mp4" }, bob.token)).status, 400);
       assertEquals(
-        (await send({ ...withMedia, media_type: "text", content: "hi" }, bob.token)).status,
+        (await send({ ...withMedia, media_duration_seconds: 300 }, bob.token))
+          .status,
+        400,
+      );
+      assertEquals(
+        (await send({ ...withMedia, media_mime: "video/mp4" }, bob.token))
+          .status,
+        400,
+      );
+      assertEquals(
+        (await send(
+          { ...withMedia, media_type: "text", content: "hi" },
+          bob.token,
+        )).status,
         400,
       );
 
@@ -402,58 +474,69 @@ Deno.test("client-facing functions", async (t) => {
 
     await t.step("one reflection per person per day", async () => {
       const res = await submit(
-        { day_instance_id: dayInstanceId, media_type: "text", content: "again", language: "en" },
+        {
+          day_instance_id: dayInstanceId,
+          media_type: "text",
+          content: "again",
+          language: "en",
+        },
         alice.token,
       );
       assertEquals(res.status, 409);
     });
 
-    await t.step("an approved reflection carries the day over its threshold", async () => {
-      // Alice reads Spanish, so bob's English reflection has a real translation target.
-      // With everyone on the same language there is nobody to translate for, and
-      // translated_text is correctly left null.
-      await db.from("users").update({ preferred_language: "es" }).eq("id", alice.id);
+    await t.step(
+      "an approved reflection carries the day over its threshold",
+      async () => {
+        // Alice reads Spanish, so bob's English reflection has a real translation target.
+        // With everyone on the same language there is nobody to translate for, and
+        // translated_text is correctly left null.
+        await db.from("users").update({ preferred_language: "es" }).eq(
+          "id",
+          alice.id,
+        );
 
-      const ai = fakeAi();
-      const res = await submit(
-        {
-          day_instance_id: dayInstanceId,
-          media_type: "voice",
-          transcript: "This passage anchored me today.",
-          language: "en",
-        },
-        bob.token,
-        ai,
-      );
+        const ai = fakeAi();
+        const res = await submit(
+          {
+            day_instance_id: dayInstanceId,
+            media_type: "voice",
+            transcript: "This passage anchored me today.",
+            language: "en",
+          },
+          bob.token,
+          ai,
+        );
 
-      assertEquals(res.status, 200);
-      const body = await res.json();
-      assertEquals(body.moderation_status, "approved");
-      // Returned inline so the client need not re-fetch just to show the late badge.
-      assertEquals(body.is_late, false);
-      assertEquals(ai.generateCalls, 1);
+        assertEquals(res.status, 200);
+        const body = await res.json();
+        assertEquals(body.moderation_status, "approved");
+        // Returned inline so the client need not re-fetch just to show the late badge.
+        assertEquals(body.is_late, false);
+        assertEquals(ai.generateCalls, 1);
 
-      const { data: reflection } = await db
-        .from("reflections")
-        .select("sentiment_tag, is_late, ai_response, translated_text")
-        .eq("id", body.reflection_id)
-        .single();
-      assertEquals(reflection!.sentiment_tag, "hopeful");
-      assertEquals(reflection!.is_late, false);
-      // The personalized response has its own column, and translated_text holds only
-      // language-keyed translations -- no smuggled "_response" key.
-      assertEquals(reflection!.ai_response, "Thank you for sharing this.");
-      assertEquals(reflection!.translated_text, { es: "texto traducido" });
+        const { data: reflection } = await db
+          .from("reflections")
+          .select("sentiment_tag, is_late, ai_response, translated_text")
+          .eq("id", body.reflection_id)
+          .single();
+        assertEquals(reflection!.sentiment_tag, "hopeful");
+        assertEquals(reflection!.is_late, false);
+        // The personalized response has its own column, and translated_text holds only
+        // language-keyed translations -- no smuggled "_response" key.
+        assertEquals(reflection!.ai_response, "Thank you for sharing this.");
+        assertEquals(reflection!.translated_text, { es: "texto traducido" });
 
-      // 1 approved of 2 members = 50%, the default threshold: the trigger flips the day.
-      const { data: day } = await db
-        .from("day_instances")
-        .select("status, participation_count")
-        .eq("id", dayInstanceId)
-        .single();
-      assertEquals(day!.status, "threshold_met");
-      assertEquals(day!.participation_count, 1);
-    });
+        // 1 approved of 2 members = 50%, the default threshold: the trigger flips the day.
+        const { data: day } = await db
+          .from("day_instances")
+          .select("status, participation_count")
+          .eq("id", dayInstanceId)
+          .single();
+        assertEquals(day!.status, "threshold_met");
+        assertEquals(day!.participation_count, 1);
+      },
+    );
   } finally {
     for (const id of groupIds) await db.from("groups").delete().eq("id", id);
     await deleteTestUsers(db, users);

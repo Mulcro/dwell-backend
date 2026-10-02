@@ -30,7 +30,9 @@ function token(
 }
 
 Deno.test("a valid id_token yields the identity", async () => {
-  const identity = await verifyIdToken(await token(), CLIENT_ID, { keys: publicKey });
+  const identity = await verifyIdToken(await token(), CLIENT_ID, {
+    keys: publicKey,
+  });
   assertEquals(identity.yvpId, "yvp-123");
   assertEquals(identity.email, "reader@example.test");
   assertEquals(identity.name, "Reader");
@@ -40,7 +42,9 @@ Deno.test("a valid id_token yields the identity", async () => {
 Deno.test("either documented issuer is accepted", async () => {
   // Their discovery doc and their written docs disagree; both must work.
   for (const iss of YV_ISSUERS) {
-    const identity = await verifyIdToken(await token({ iss }), CLIENT_ID, { keys: publicKey });
+    const identity = await verifyIdToken(await token({ iss }), CLIENT_ID, {
+      keys: publicKey,
+    });
     assertEquals(identity.email, "reader@example.test");
   }
 });
@@ -91,10 +95,14 @@ Deno.test("a mismatched nonce is refused, a matching one passes", async () => {
     HttpError,
   );
 
-  const ok = await verifyIdToken(await token({ nonce: "issued-nonce" }), CLIENT_ID, {
-    keys: publicKey,
-    nonce: "issued-nonce",
-  });
+  const ok = await verifyIdToken(
+    await token({ nonce: "issued-nonce" }),
+    CLIENT_ID,
+    {
+      keys: publicKey,
+      nonce: "issued-nonce",
+    },
+  );
   assertEquals(ok.email, "reader@example.test");
 });
 

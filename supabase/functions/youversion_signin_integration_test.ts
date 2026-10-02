@@ -57,32 +57,35 @@ Deno.test("youversion sign-in bridge", async (t) => {
       assertEquals(data.users.some((u) => u.email === email), false);
     });
 
-    await t.step("first sign-in creates the user and returns a redeemable token", async () => {
-      const res = await signIn({ id_token: await idToken(email) });
-      assertEquals(res.status, 200);
+    await t.step(
+      "first sign-in creates the user and returns a redeemable token",
+      async () => {
+        const res = await signIn({ id_token: await idToken(email) });
+        assertEquals(res.status, 200);
 
-      const body = await res.json();
-      assertEquals(body.email, email);
-      assertEquals(body.is_new_user, true);
-      assertNotEquals(body.token_hash, undefined);
+        const body = await res.json();
+        assertEquals(body.email, email);
+        assertEquals(body.is_new_user, true);
+        assertNotEquals(body.token_hash, undefined);
 
-      // THE PROOF: redeem it the way the app will and get a real session.
-      const anon = createClient(LOCAL_URL, LOCAL_ANON_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      const { data, error } = await anon.auth.verifyOtp({
-        type: "magiclink",
-        token_hash: body.token_hash,
-      });
-      assertEquals(error, null);
-      assertEquals(data.session?.user.email, email);
-      userId = data.session!.user.id;
+        // THE PROOF: redeem it the way the app will and get a real session.
+        const anon = createClient(LOCAL_URL, LOCAL_ANON_KEY, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { data, error } = await anon.auth.verifyOtp({
+          type: "magiclink",
+          token_hash: body.token_hash,
+        });
+        assertEquals(error, null);
+        assertEquals(data.session?.user.email, email);
+        userId = data.session!.user.id;
 
-      // And the ordinary profile trigger fired, so everything downstream works.
-      const { data: profile } = await db
-        .from("users").select("name").eq("id", userId).single();
-      assertEquals(profile!.name, "Reader");
-    });
+        // And the ordinary profile trigger fired, so everything downstream works.
+        const { data: profile } = await db
+          .from("users").select("name").eq("id", userId).single();
+        assertEquals(profile!.name, "Reader");
+      },
+    );
 
     await t.step("signing in again reuses the same account", async () => {
       const res = await signIn({ id_token: await idToken(email) });
@@ -102,18 +105,24 @@ Deno.test("youversion sign-in bridge", async (t) => {
       assertEquals(data.session?.user.id, userId);
     });
 
-    await t.step("an empty nonce means unbound, not 'must be empty'", async () => {
-      // Sending nonce: "" once rejected a perfectly good token, because an empty string
-      // was compared literally against the claim.
-      const req = post({ id_token: await idToken(email), nonce: "" });
-      const res = await invoke(() => handleYouVersionSignIn(req, db, CLIENT_ID, publicKey));
-      assertEquals(res.status, 200);
-    });
+    await t.step(
+      "an empty nonce means unbound, not 'must be empty'",
+      async () => {
+        // Sending nonce: "" once rejected a perfectly good token, because an empty string
+        // was compared literally against the claim.
+        const req = post({ id_token: await idToken(email), nonce: "" });
+        const res = await invoke(() => handleYouVersionSignIn(req, db, CLIENT_ID, publicKey));
+        assertEquals(res.status, 200);
+      },
+    );
 
-    await t.step("a token carrying no email is refused before any write", async () => {
-      const res = await signIn({ id_token: await idToken("") });
-      assertEquals(res.status, 422);
-    });
+    await t.step(
+      "a token carrying no email is refused before any write",
+      async () => {
+        const res = await signIn({ id_token: await idToken("") });
+        assertEquals(res.status, 422);
+      },
+    );
   } finally {
     if (userId) await db.auth.admin.deleteUser(userId);
   }

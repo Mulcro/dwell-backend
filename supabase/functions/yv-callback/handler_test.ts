@@ -54,7 +54,9 @@ Deno.test("the replay carries unrecognised parameters back too", () => {
   // Their flow carries its own session context mid-flow (a `__yvii` identifier). Dropping
   // anything we do not recognise gets the replay refused as an invalid state, which is
   // exactly how this first failed.
-  const to = location("?state=abc&granted_permissions=highlights&__yvii=SESSION123");
+  const to = location(
+    "?state=abc&granted_permissions=highlights&__yvii=SESSION123",
+  );
   assertStringIncludes(to, "state=abc");
   assertStringIncludes(to, "granted_permissions=highlights");
   assertStringIncludes(to, "__yvii=SESSION123");
@@ -63,7 +65,9 @@ Deno.test("the replay carries unrecognised parameters back too", () => {
 Deno.test("but the app-bound leg still strips what it is not expecting", () => {
   // The whitelist matters on this side: a live code must not be forwarded onward with
   // attacker-chosen parameters attached.
-  const to = location("?code=abc&__yvii=SESSION123&redirect_uri=https://evil.example");
+  const to = location(
+    "?code=abc&__yvii=SESSION123&redirect_uri=https://evil.example",
+  );
   assertStringIncludes(to, "code=abc");
   assertEquals(to.includes("__yvii"), false);
   assertEquals(to.includes("evil.example"), false);

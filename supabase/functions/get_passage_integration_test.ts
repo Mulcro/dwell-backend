@@ -22,7 +22,10 @@ function countingSource(): PassageSource & { calls: number } {
     calls: 0,
     fetch(_bibleId: number, ref: string) {
       source.calls++;
-      return Promise.resolve({ reference: `Ref for ${ref}`, content: `Text of ${ref}` });
+      return Promise.resolve({
+        reference: `Ref for ${ref}`,
+        content: `Text of ${ref}`,
+      });
     },
   };
   return source;
@@ -35,8 +38,11 @@ Deno.test("get-passage", async (t) => {
   users.push(alice);
   const ref = `PSA.${Math.floor(Math.random() * 100000)}.1`;
 
-  const call = (body: unknown, token: string | undefined, source: PassageSource) =>
-    invoke(() => handleGetPassage(post(body, token), db, source, CONFIG));
+  const call = (
+    body: unknown,
+    token: string | undefined,
+    source: PassageSource,
+  ) => invoke(() => handleGetPassage(post(body, token), db, source, CONFIG));
 
   try {
     await t.step("requires a signed-in caller", async () => {
@@ -46,7 +52,14 @@ Deno.test("get-passage", async (t) => {
 
     await t.step("rejects anything that is not a USFM id", async () => {
       const source = countingSource();
-      for (const bad of ["", "not a ref", "../../etc/passwd", "PSA.34.18; drop table"]) {
+      for (
+        const bad of [
+          "",
+          "not a ref",
+          "../../etc/passwd",
+          "PSA.34.18; drop table",
+        ]
+      ) {
         const res = await call({ ref: bad }, alice.token, source);
         assertEquals(res.status, 400);
       }
@@ -73,15 +86,18 @@ Deno.test("get-passage", async (t) => {
       assertEquals(source.calls, 1);
     });
 
-    await t.step("the cached row is readable by a signed-in client", async () => {
-      const { data } = await db
-        .from("passage_cache")
-        .select("reference, translation")
-        .eq("bible_id", CONFIG.bibleId)
-        .eq("passage_ref", ref)
-        .single();
-      assertEquals(data!.translation, "BSB");
-    });
+    await t.step(
+      "the cached row is readable by a signed-in client",
+      async () => {
+        const { data } = await db
+          .from("passage_cache")
+          .select("reference, translation")
+          .eq("bible_id", CONFIG.bibleId)
+          .eq("passage_ref", ref)
+          .single();
+        assertEquals(data!.translation, "BSB");
+      },
+    );
   } finally {
     await db.from("passage_cache").delete().eq("passage_ref", ref);
     await deleteTestUsers(db, users);

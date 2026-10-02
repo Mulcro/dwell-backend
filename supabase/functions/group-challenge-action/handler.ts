@@ -43,7 +43,11 @@ export async function handleGroupChallengeAction(
   if (!group) throw new HttpError(404, "Group not found");
 
   // A finished challenge cannot be restarted or re-ended from the prompt.
-  if (["completed", "abandoned", "expired_incomplete"].includes(group.challenge_status)) {
+  if (
+    ["completed", "abandoned", "expired_incomplete"].includes(
+      group.challenge_status,
+    )
+  ) {
     throw new HttpError(409, "This challenge has already ended");
   }
 

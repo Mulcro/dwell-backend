@@ -11,12 +11,15 @@ const DEFAULT_TRANSLATION = "BSB";
 Deno.serve(async (req) => {
   try {
     const { url, serviceRoleKey } = supabaseConfig();
-    const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+    const db = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
     const source = youVersionSource(requireEnv("YOUVERSION_APP_KEY"));
 
     return await handleGetPassage(req, db, source, {
       bibleId: Number(Deno.env.get("YOUVERSION_BIBLE_ID") ?? DEFAULT_BIBLE_ID),
-      translation: Deno.env.get("YOUVERSION_TRANSLATION") ?? DEFAULT_TRANSLATION,
+      translation: Deno.env.get("YOUVERSION_TRANSLATION") ??
+        DEFAULT_TRANSLATION,
     });
   } catch (err) {
     return toErrorResponse(err);

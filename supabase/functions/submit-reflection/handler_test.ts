@@ -119,7 +119,10 @@ const voice = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-const present = { exists: () => Promise.resolve(true) };
+const present = {
+  exists: () => Promise.resolve(true),
+  signedUrl: () => Promise.resolve("https://signed.test/a"),
+};
 
 Deno.test("a flagged voice reflection has its recording destroyed", async () => {
   // Storage RLS would keep it unreadable, but content the group must never hear should
@@ -204,5 +207,92 @@ Deno.test("a valid waveform is stored with the recording", async () => {
   );
 
   assertEquals(res.status, 200);
+  assertEquals((await res.json()).moderation_status, "approved");
+});
+
+const photo = (extra: Record<string, unknown> = {}) => ({
+  day_instance_id: DAY,
+  media_type: "photo",
+  language: "en",
+  media_path: `${USER}/a.jpg`,
+  media_mime: "image/jpeg",
+  ...extra,
+});
+
+Deno.test("a photo reflection is moderated by looking at the image", async () => {
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(post(photo()), db.client, fakeAi(), present)
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).moderation_status, "approved");
+});
+
+Deno.test("a photo needs no caption", async () => {
+  // Unlike voice, a photo carries its own meaning; there is no transcript to require.
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(post(photo()), db.client, fakeAi(), present)
+  );
+  assertEquals(res.status, 200);
+});
+
+Deno.test("a flagged photo is destroyed", async () => {
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(post(photo()), db.client, fakeAi({ imageFlagged: true }), present)
+  );
+
+  assertEquals((await res.json()).moderation_status, "flagged");
+  assertEquals(db.queuedForDeletion, [`${USER}/a.jpg`]);
+  assertEquals(db.lastUpdate?.media_path, null);
+});
+
+Deno.test("a photo reflection must carry an image", async () => {
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(
+      post({ day_instance_id: DAY, media_type: "photo", language: "en" }),
+      db.client,
+      fakeAi(),
+      present,
+    )
+  );
+  assertEquals(res.status, 400);
+});
+
+Deno.test("an image whose URL cannot be signed is treated as flagged", async () => {
+  // Failing open would make a signing error a way to post an unchecked image.
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(post(photo()), db.client, fakeAi(), {
+      exists: () => Promise.resolve(true),
+      signedUrl: () => Promise.resolve(null),
+    })
+  );
+
+  assertEquals((await res.json()).moderation_status, "flagged");
+});
+
+Deno.test("a photo cannot claim a duration or a waveform", async () => {
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(
+      post(photo({ media_duration_seconds: 10 })),
+      db.client,
+      fakeAi(),
+      present,
+    )
+  );
+  assertEquals(res.status, 400);
+});
+
+Deno.test("audio is still moderated by its transcript, not looked at", async () => {
+  const db = fakeDbWithMedia();
+  const res = await invoke(() =>
+    handleSubmitReflection(post(voice()), db.client, fakeAi({ imageFlagged: true }), present)
+  );
+  // imageFlagged must not affect the audio path.
   assertEquals((await res.json()).moderation_status, "approved");
 });

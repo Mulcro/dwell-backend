@@ -10,7 +10,10 @@ import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
  * `active` and opens Day 1. Idempotent: re-joining returns the current state rather than
  * erroring, since the invite link can be tapped twice.
  */
-export async function handleJoinGroup(req: Request, db: SupabaseClient): Promise<Response> {
+export async function handleJoinGroup(
+  req: Request,
+  db: SupabaseClient,
+): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
   // Forgives how the code was typed -- lower case from a pasted link, and the spaces or
@@ -26,14 +29,19 @@ export async function handleJoinGroup(req: Request, db: SupabaseClient): Promise
 
   if (!group) throw new HttpError(404, "Invite not found");
 
-  if (group.challenge_status === "completed" || group.challenge_status === "abandoned") {
+  if (
+    group.challenge_status === "completed" ||
+    group.challenge_status === "abandoned"
+  ) {
     throw new HttpError(409, "This challenge has already ended");
   }
 
   // on_conflict makes a second tap a no-op instead of a duplicate-key error.
   const { error: memberError } = await db
     .from("group_members")
-    .upsert({ group_id: group.id, user_id: userId }, { onConflict: "group_id,user_id" });
+    .upsert({ group_id: group.id, user_id: userId }, {
+      onConflict: "group_id,user_id",
+    });
 
   if (memberError) {
     // 23514 = the group-size trigger. The cap is enforced in the database, so this is

@@ -30,7 +30,9 @@ export async function handleDailyCronInactivityCheck(
 
   const { data: groups, error } = await db
     .from("groups")
-    .select("id, consecutive_silent_days, prompt_pending, last_inactivity_check_on")
+    .select(
+      "id, consecutive_silent_days, prompt_pending, last_inactivity_check_on",
+    )
     .in("challenge_status", ["active", "paused"]);
 
   if (error) {
@@ -64,13 +66,22 @@ export async function handleDailyCronInactivityCheck(
 
     await db
       .from("groups")
-      .update({ consecutive_silent_days: silentDays, last_inactivity_check_on: today })
+      .update({
+        consecutive_silent_days: silentDays,
+        last_inactivity_check_on: today,
+      })
       .eq("id", group.id);
 
-    if (silentDays >= SILENT_DAYS_BEFORE_EXPIRY && await notAtFinalDay(db, group.id, days ?? [])) {
+    if (
+      silentDays >= SILENT_DAYS_BEFORE_EXPIRY &&
+      await notAtFinalDay(db, group.id, days ?? [])
+    ) {
       await db
         .from("groups")
-        .update({ challenge_status: "expired_incomplete", prompt_pending: false })
+        .update({
+          challenge_status: "expired_incomplete",
+          prompt_pending: false,
+        })
         .eq("id", group.id);
       await dispatch("end-of-challenge-summary", { group_id: group.id });
       expired++;
@@ -79,7 +90,10 @@ export async function handleDailyCronInactivityCheck(
 
     if (silentDays >= SILENT_DAYS_BEFORE_PROMPT && !group.prompt_pending) {
       await promptEveryMember(db, group.id);
-      await db.from("groups").update({ prompt_pending: true }).eq("id", group.id);
+      await db.from("groups").update({ prompt_pending: true }).eq(
+        "id",
+        group.id,
+      );
       prompted++;
     }
   }
@@ -99,7 +113,8 @@ async function notAtFinalDay(
     .eq("id", groupId)
     .maybeSingle();
 
-  const dayCount = (group?.plan_challenges as { day_count?: number } | null)?.day_count;
+  const dayCount = (group?.plan_challenges as { day_count?: number } | null)
+    ?.day_count;
   if (!dayCount) return true;
 
   const highest = days.reduce((max, d) => Math.max(max, d.day_index), 0);
@@ -107,7 +122,10 @@ async function notAtFinalDay(
 }
 
 /** The prompt goes to every member; whoever answers first settles it. */
-async function promptEveryMember(db: SupabaseClient, groupId: string): Promise<void> {
+async function promptEveryMember(
+  db: SupabaseClient,
+  groupId: string,
+): Promise<void> {
   const { data: members } = await db
     .from("group_members")
     .select("user_id")
@@ -124,5 +142,7 @@ async function promptEveryMember(db: SupabaseClient, groupId: string): Promise<v
   if (rows.length === 0) return;
 
   const { error } = await db.from("ai_insights").insert(rows);
-  if (error) console.error("daily-cron-inactivity-check could not write prompts", error);
+  if (error) {
+    console.error("daily-cron-inactivity-check could not write prompts", error);
+  }
 }
