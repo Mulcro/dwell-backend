@@ -14,7 +14,7 @@ interface Recorded {
   client: any;
 }
 
-function fakeDb(): Recorded {
+function fakeDb(opts: { groupLanguages?: string[]; authorLanguage?: string } = {}): Recorded {
   const state = {
     inserted: null as Record<string, unknown> | null,
     queued: [] as Array<{ bucket: string; path: string }>,
@@ -22,10 +22,26 @@ function fakeDb(): Recorded {
   const table = (name: string) => {
     // deno-lint-ignore no-explicit-any
     const api: any = {
+      select: () => api,
+      eq: () => api,
+      maybeSingle: () => {
+        if (name === "reflections") return Promise.resolve({ data: { day_instance_id: "d1" } });
+        if (name === "day_instances") return Promise.resolve({ data: { group_id: "g1" } });
+        if (name === "users") {
+          return Promise.resolve({ data: { preferred_language: opts.authorLanguage ?? "en" } });
+        }
+        return Promise.resolve({ data: null });
+      },
+      // The group's languages, awaited directly by the translation step.
+      // deno-lint-ignore no-explicit-any
+      then: (resolve: any) =>
+        resolve({ data: (opts.groupLanguages ?? ["en"]).map((l) => ({ preferred_language: l })) }),
       insert: (row: Record<string, unknown>) => {
         state.inserted = row;
         return {
-          select: () => ({ single: () => Promise.resolve({ data: { id: COMMENT }, error: null }) }),
+          select: () => ({
+            single: () => Promise.resolve({ data: { id: COMMENT }, error: null }),
+          }),
         };
       },
       upsert: (row: { bucket: string; path: string }) => {
@@ -65,7 +81,10 @@ const present = {
 const post = (body: unknown, token = "good") =>
   new Request("http://x", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify(body),
   });
 
@@ -116,7 +135,10 @@ Deno.test("a flagged reply is never written, and its upload is destroyed", async
 
   assertEquals(res.status, 422);
   assertEquals(db.inserted, null);
-  assertEquals(db.queued, [{ bucket: "reflection-media", path: `${USER}/a.jpg` }]);
+  assertEquals(db.queued, [{
+    bucket: "reflection-media",
+    path: `${USER}/a.jpg`,
+  }]);
 });
 
 Deno.test("you cannot reply to a reflection you cannot see", async () => {
@@ -172,7 +194,11 @@ Deno.test("a voice reply is carried by its transcript", async () => {
       present,
     )
   );
-  assertEquals(missing.status, 400, "a voice reply with no transcript is refused");
+  assertEquals(
+    missing.status,
+    400,
+    "a voice reply with no transcript is refused",
+  );
 });
 
 Deno.test("a photo reply must be accompanied by words", async () => {
@@ -229,7 +255,10 @@ Deno.test("an image that cannot be signed is treated as flagged", async () => {
       db.client,
       fakeAi(),
       visible,
-      { exists: () => Promise.resolve(true), signedUrl: () => Promise.resolve(null) },
+      {
+        exists: () => Promise.resolve(true),
+        signedUrl: () => Promise.resolve(null),
+      },
     )
   );
 
@@ -248,4 +277,80 @@ Deno.test("submit-comment requires a session", async () => {
     )
   );
   assertEquals(res.status, 401);
+});
+
+Deno.test("a reply is translated for group-mates who read another language", async () => {
+  const db = fakeDb({ groupLanguages: ["en", "fr"] });
+  const res = await run(() =>
+    handleSubmitComment(
+      post({ reflection_id: REFLECTION, content: "this encouraged me", language: "en" }),
+      db.client,
+      fakeAi(),
+      visible,
+      present,
+    )
+  );
+
+  assertEquals(res.status, 201);
+  // fakeAi returns a Spanish translation; what matters is that the column is written.
+  assertEquals(db.inserted?.language, "en");
+  assertEquals(typeof db.inserted?.translated_text, "object");
+});
+
+Deno.test("a reply is not translated when the group all read one language", async () => {
+  // The common case, and it must cost nothing: no call, and a null column rather than {}.
+  const db = fakeDb({ groupLanguages: ["en", "en"] });
+  await run(() =>
+    handleSubmitComment(
+      post({ reflection_id: REFLECTION, content: "same language here", language: "en" }),
+      db.client,
+      fakeAi(),
+      visible,
+      present,
+    )
+  );
+
+  assertEquals(db.inserted?.translated_text, null);
+});
+
+Deno.test("language falls back to what the author reads", async () => {
+  // The client may not label the reply yet; guessing 'en' would send the translation off
+  // in the wrong direction for a French speaker.
+  const db = fakeDb({ groupLanguages: ["en", "fr"], authorLanguage: "fr" });
+  await run(() =>
+    handleSubmitComment(
+      post({ reflection_id: REFLECTION, content: "merci pour ce partage" }),
+      db.client,
+      fakeAi(),
+      visible,
+      present,
+    )
+  );
+
+  assertEquals(db.inserted?.language, "fr");
+});
+
+Deno.test("a voice reply translates its transcript", async () => {
+  const db = fakeDb({ groupLanguages: ["en", "fr"] });
+  await run(() =>
+    handleSubmitComment(
+      post({
+        reflection_id: REFLECTION,
+        media_type: "voice",
+        transcript: "thinking of you",
+        language: "en",
+        media_path: `${USER}/a.m4a`,
+        media_mime: "audio/mp4",
+        media_duration_seconds: 9,
+      }),
+      db.client,
+      fakeAi(),
+      visible,
+      present,
+    )
+  );
+
+  // content stays null on a voice reply, exactly as on a voice reflection.
+  assertEquals(db.inserted?.content, null);
+  assertEquals(typeof db.inserted?.translated_text, "object");
 });
