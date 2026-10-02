@@ -57,14 +57,17 @@ select is((select participation_count from day_instances where id = 'dddddddd-aa
 select is((select count(*)::int from dispatch_log where name = 'generate-group-pulse'),
   1, 'group pulse is dispatched once');
 
--- A second approval on an already-met day must not dispatch again.
+-- A later approval dispatches again, on purpose. The pulse used to be written once, at
+-- the instant the day tipped over -- which with a 50% threshold is typically half the
+-- group, so anyone posting afterwards never appeared on the card at all. It has to catch
+-- up, and generate-group-pulse is what decides whether there is anything new to say.
 update reflections set moderation_status = 'approved'
   where id = 'eeeeeeee-2222-2222-2222-222222222222';
 
 select is((select participation_count from day_instances where id = 'dddddddd-aaaa-aaaa-aaaa-dddddddddddd'),
   2, 'the later approval still updates the count');
 select is((select count(*)::int from dispatch_log where name = 'generate-group-pulse'),
-  1, 'group pulse never double-fires');
+  2, 'and dispatches the pulse again so it can take the new reflection in');
 
 -- ------------------------------- Group B: a late joiner must not change the day's math
 insert into groups (id, name, plan_challenge_id, created_by, catch_up_threshold_pct, challenge_status)
