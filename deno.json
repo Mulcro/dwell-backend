@@ -16,7 +16,7 @@
     ]
   },
   "tasks": {
-    "check": "deno fmt --check && deno lint && deno test --allow-env --ignore='**/*_integration_test.ts'",
+    "check": "deno fmt --check && deno lint && deno check supabase/functions/ && deno test --allow-env --ignore='**/*_integration_test.ts'",
     "test:integration": "deno test --allow-env --allow-net --allow-read supabase/functions/"
   },
   "imports": {

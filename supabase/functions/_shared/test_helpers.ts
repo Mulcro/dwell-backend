@@ -21,7 +21,10 @@ export async function invoke(fn: () => Promise<Response>): Promise<Response> {
   }
 }
 
-// Local-stack defaults. These are the CLI's fixed development keys, not secrets.
+// Local-stack defaults. These are the Supabase CLI's FIXED LOCAL DEVELOPMENT keys,
+// printed by `supabase start` and identical in every CLI install: public by design,
+// iss=supabase-demo, no project ref, valid only against 127.0.0.1. Not credentials for
+// any deployed project. Secret scanners flag them; this is why.
 const LOCAL_URL = "http://127.0.0.1:54321";
 const LOCAL_SERVICE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
@@ -59,7 +62,10 @@ export interface TestUser {
 }
 
 /** Creates a confirmed user and signs in, returning a real session token. */
-export async function createTestUser(db: SupabaseClient, name: string): Promise<TestUser> {
+export async function createTestUser(
+  db: SupabaseClient,
+  name: string,
+): Promise<TestUser> {
   const email = `${name}-${crypto.randomUUID()}@example.test`;
   const password = crypto.randomUUID();
 
@@ -69,12 +75,15 @@ export async function createTestUser(db: SupabaseClient, name: string): Promise<
     email_confirm: true,
     user_metadata: { name },
   });
-  if (error || !created.user) throw new Error(`could not create test user: ${error?.message}`);
+  if (error || !created.user) {
+    throw new Error(`could not create test user: ${error?.message}`);
+  }
 
-  const { data: session, error: signInError } = await anonClient().auth.signInWithPassword({
-    email,
-    password,
-  });
+  const { data: session, error: signInError } = await anonClient().auth
+    .signInWithPassword({
+      email,
+      password,
+    });
   if (signInError || !session.session) {
     throw new Error(`could not sign in test user: ${signInError?.message}`);
   }
@@ -82,7 +91,10 @@ export async function createTestUser(db: SupabaseClient, name: string): Promise<
   return { id: created.user.id, token: session.session.access_token };
 }
 
-export async function deleteTestUsers(db: SupabaseClient, users: TestUser[]): Promise<void> {
+export async function deleteTestUsers(
+  db: SupabaseClient,
+  users: TestUser[],
+): Promise<void> {
   for (const user of users) {
     await db.auth.admin.deleteUser(user.id);
   }
@@ -100,10 +112,16 @@ export function post(body: unknown, token?: string): Request {
 }
 
 /** An Ai stub. `flagged` decides moderation; nothing reaches the network. */
-export function fakeAi(options: { flagged?: boolean } = {}): Ai & { generateCalls: number } {
+export function fakeAi(
+  options: { flagged?: boolean; imageFlagged?: boolean } = {},
+): Ai & { generateCalls: number } {
   const ai = {
     generateCalls: 0,
     moderate: () => Promise.resolve({ flagged: options.flagged ?? false }),
+    moderateImage: () =>
+      Promise.resolve({
+        flagged: options.imageFlagged ?? options.flagged ?? false,
+      }),
     generateJson: (_prompt: string) => {
       ai.generateCalls++;
       return Promise.resolve({
@@ -130,7 +148,9 @@ export function serviceRoleKey(): string {
 }
 
 /** Records dispatches instead of making them, so cross-function calls are assertable. */
-export function fakeDispatch(): Dispatch & { calls: Array<{ name: string; body: unknown }> } {
+export function fakeDispatch(): Dispatch & {
+  calls: Array<{ name: string; body: unknown }>;
+} {
   const calls: Array<{ name: string; body: unknown }> = [];
   const fn = (name: string, body: unknown) => {
     calls.push({ name, body });
@@ -160,7 +180,11 @@ export function daytimeTimezone(): string {
   ];
   for (const zone of zones) {
     const hour = Number.parseInt(
-      new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hour12: false })
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour: "numeric",
+        hour12: false,
+      })
         .format(new Date()),
       10,
     ) % 24;
@@ -187,7 +211,11 @@ export function nighttimeTimezone(): string {
   ];
   for (const zone of zones) {
     const hour = Number.parseInt(
-      new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hour12: false })
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour: "numeric",
+        hour12: false,
+      })
         .format(new Date()),
       10,
     ) % 24;
@@ -206,9 +234,13 @@ export function nighttimeTimezone(): string {
  */
 export async function waitForRealtime(timeoutMs = 60_000): Promise<void> {
   const db = serviceClient();
-  const client = createClient(url(), Deno.env.get("SUPABASE_ANON_KEY") ?? LOCAL_ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const client = createClient(
+    url(),
+    Deno.env.get("SUPABASE_ANON_KEY") ?? LOCAL_ANON_KEY,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+    },
+  );
 
   const { data: group } = await db
     .from("groups")
@@ -260,7 +292,11 @@ export async function waitForRealtime(timeoutMs = 60_000): Promise<void> {
       await Promise.race([seen, new Promise((r) => setTimeout(r, 2000))]);
     }
 
-    if (!delivered) throw new Error(`Realtime never delivered a change within ${timeoutMs}ms`);
+    if (!delivered) {
+      throw new Error(
+        `Realtime never delivered a change within ${timeoutMs}ms`,
+      );
+    }
   } finally {
     await client.removeAllChannels();
     client.realtime.disconnect();

@@ -8,6 +8,9 @@ const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const MEDIA_BUCKET = "reflection-media";
 const MAX_AUDIO_SECONDS = 120;
+const IMAGE_MIME = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+/** Long enough for the moderation call, short enough to be useless if it leaks. */
+const MODERATION_URL_SECONDS = 120;
 const AUDIO_MIME = [
   "audio/mp4",
   "audio/m4a",
@@ -37,6 +40,8 @@ const AUDIO_MIME = [
  */
 export interface MediaStore {
   exists(path: string): Promise<boolean>;
+  /** A short-lived readable URL, so moderation can see an image the bucket keeps private. */
+  signedUrl(path: string): Promise<string | null>;
 }
 
 export function supabaseMediaStore(db: SupabaseClient): MediaStore {
@@ -56,6 +61,18 @@ export function supabaseMediaStore(db: SupabaseClient): MediaStore {
       }
       return (data ?? []).some((o: { name: string }) => o.name === path.slice(slash + 1));
     },
+
+    async signedUrl(path) {
+      const { data, error } = await db.storage
+        .from(MEDIA_BUCKET)
+        .createSignedUrl(path, MODERATION_URL_SECONDS);
+
+      if (error) {
+        console.error("could not sign the upload for moderation", error);
+        return null;
+      }
+      return data?.signedUrl ?? null;
+    },
   };
 }
 
@@ -71,11 +88,13 @@ export async function handleSubmitReflection(
   const dayInstanceId = requireString(body, "day_instance_id");
   const language = requireString(body, "language");
   const mediaType = requireString(body, "media_type");
-  if (mediaType !== "text" && mediaType !== "voice") {
-    throw new HttpError(400, "media_type must be text or voice");
+  if (mediaType !== "text" && mediaType !== "voice" && mediaType !== "photo") {
+    throw new HttpError(400, "media_type must be text, voice or photo");
   }
 
-  // Voice arrives already transcribed on-device; either way there must be words.
+  // Voice arrives already transcribed on-device. Every kind needs words: a photo posted
+  // into a group with nothing said about it is not a reflection, and the caption is also
+  // what translation and the group pulse have to work with.
   const content = typeof body.content === "string" ? body.content.trim() : null;
   const transcript = typeof body.transcript === "string" ? body.transcript.trim() : null;
   const text = mediaType === "voice" ? transcript : content;
@@ -88,13 +107,17 @@ export async function handleSubmitReflection(
 
   // A recording is optional even for voice: the transcript is what the day counts and
   // what moderation reads, so a failed upload degrades to text rather than blocking.
+  const store = media_store ?? supabaseMediaStore(db);
   const media = await validateMedia(
-    media_store ?? supabaseMediaStore(db),
+    store,
     body,
     userId,
     mediaType,
     transcript,
   );
+
+  const mediaKind = media.media_kind as string | undefined;
+  delete media.media_kind;
 
   const day = await loadPostableDay(db, dayInstanceId, userId);
 
@@ -128,7 +151,9 @@ export async function handleSubmitReflection(
   // would answer every retry with 409, locking the member out of the day permanently
   // over what may have been a momentary upstream blip.
   try {
-    const { flagged } = await ai.moderate(text);
+    const { flagged } = mediaKind === "image"
+      ? await moderateImage(ai, store, media.media_path as string, text)
+      : await ai.moderate(text as string);
     if (flagged) {
       // A deliberate terminal state, not a failure: keep the row so the same content
       // cannot simply be resubmitted, and leave it hidden and uncounted.
@@ -316,7 +341,13 @@ async function validateMedia(
   mediaType: string,
   transcript: string | null,
 ): Promise<Record<string, unknown>> {
-  if (body.media_path === undefined || body.media_path === null) return {};
+  if (body.media_path === undefined || body.media_path === null) {
+    // A photo is nothing without its image: there is no text to fall back to.
+    if (mediaType === "photo") {
+      throw new HttpError(400, "media_path is required for a photo reflection");
+    }
+    return {};
+  }
 
   const path = requireString(body, "media_path");
 
@@ -325,7 +356,7 @@ async function validateMedia(
   }
   // Moderation, translation and the group pulse all read the transcript. Storing audio
   // without one would put unreadable, unmoderated content in front of the group.
-  if (!transcript) {
+  if (mediaType === "voice" && !transcript) {
     throw new HttpError(400, "transcript is required when sending a recording");
   }
 
@@ -336,11 +367,34 @@ async function validateMedia(
   }
 
   const mime = requireString(body, "media_mime");
-  if (!AUDIO_MIME.includes(mime)) {
+  const isImage = mediaType === "photo";
+  const allowed = isImage ? IMAGE_MIME : AUDIO_MIME;
+  if (!allowed.includes(mime)) {
     throw new HttpError(
       400,
-      `media_mime must be one of: ${AUDIO_MIME.join(", ")}`,
+      `media_mime must be one of: ${allowed.join(", ")}`,
     );
+  }
+
+  // The object must actually be there. A path pointing at nothing would produce a
+  // reflection with a permanently broken play button.
+  if (!await store.exists(path)) {
+    throw new HttpError(
+      404,
+      "That upload was not found. Upload it before posting.",
+    );
+  }
+
+  if (isImage) {
+    // A still has no duration and no waveform; accepting either would record something
+    // the client would then have to pretend to honour.
+    if (
+      body.media_duration_seconds !== undefined ||
+      body.media_peaks !== undefined
+    ) {
+      throw new HttpError(400, "A photo has no duration or waveform");
+    }
+    return { media_path: path, media_mime: mime, media_kind: "image" };
   }
 
   const duration = optionalInt(
@@ -358,21 +412,36 @@ async function validateMedia(
 
   const peaks = parsePeaks(body.media_peaks);
 
-  // The object must actually be there. A path pointing at nothing would produce a
-  // reflection with a permanently broken play button.
-  if (!await store.exists(path)) {
-    throw new HttpError(
-      404,
-      "That recording was not found. Upload it before posting.",
-    );
-  }
-
   return {
     media_path: path,
     media_mime: mime,
     media_duration_seconds: duration,
+    media_kind: "audio",
     ...(peaks ? { media_peaks: peaks } : {}),
   };
+}
+
+/**
+ * Moderates a photo by looking at it.
+ *
+ * The bucket is private, so the image is handed to moderation as a short-lived signed
+ * URL rather than made public for the duration. If it cannot be signed we fail closed:
+ * an image nobody has checked must not reach the group.
+ */
+async function moderateImage(
+  ai: Ai,
+  store: MediaStore,
+  path: string,
+  caption: string | null,
+): Promise<{ flagged: boolean }> {
+  const url = await store.signedUrl(path);
+  if (!url) {
+    console.error(
+      "could not sign an image for moderation; treating it as flagged",
+    );
+    return { flagged: true };
+  }
+  return await ai.moderateImage(url, caption);
 }
 
 /**

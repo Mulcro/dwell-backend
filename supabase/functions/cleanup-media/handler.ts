@@ -2,7 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
 import { json } from "../_shared/http.ts";
 
-const BUCKET = "reflection-media";
+/** The queue now serves more than one bucket, so each row says which it belongs to. */
+const DEFAULT_BUCKET = "reflection-media";
 /** Bounded so a backlog cannot turn one cron tick into a long-running job. */
 const BATCH = 100;
 
@@ -27,7 +28,7 @@ export async function handleCleanupMedia(
 
   const { data: queued, error } = await db
     .from("media_deletions")
-    .select("path, attempts")
+    .select("bucket, path, attempts")
     .order("queued_at", { ascending: true })
     .limit(BATCH);
 
@@ -37,37 +38,52 @@ export async function handleCleanupMedia(
   }
   if (!queued || queued.length === 0) return json({ deleted: 0, failed: 0 });
 
-  const paths = queued.map((row: { path: string }) => row.path);
-  const { data: removed, error: removeError } = await db.storage.from(BUCKET).remove(paths);
-
-  if (removeError) {
-    console.error("cleanup-media: Storage refused the batch", removeError);
-    await db
-      .from("media_deletions")
-      .update({ attempts: (queued[0].attempts ?? 0) + 1, last_error: removeError.message })
-      .in("path", paths);
-    return json({ deleted: 0, failed: paths.length }, 502);
+  // Storage removes within one bucket at a time, so the batch is split by bucket. A
+  // failure in one must not strand the others.
+  const byBucket = new Map<string, string[]>();
+  for (const row of queued as Array<{ bucket: string | null; path: string }>) {
+    const bucket = row.bucket ?? DEFAULT_BUCKET;
+    byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), row.path]);
   }
 
-  // Storage reports what it actually removed. Treat only those as done; a path it did
-  // not confirm stays queued rather than being forgotten.
-  const confirmed = new Set((removed ?? []).map((o: { name: string }) => o.name));
+  let deleted = 0;
+  let failed = 0;
 
-  // A path already absent from Storage is also done -- the file is gone either way, and
-  // leaving it queued would retry forever.
-  const done = paths.filter((p) => confirmed.has(p) || !(removed ?? []).length);
+  for (const [bucket, paths] of byBucket) {
+    const { data: removed, error: removeError } = await db.storage.from(bucket)
+      .remove(paths);
 
-  if (done.length > 0) {
-    await db.from("media_deletions").delete().in("path", done);
+    if (removeError) {
+      console.error(
+        `cleanup-media: Storage refused the ${bucket} batch`,
+        removeError,
+      );
+      await db
+        .from("media_deletions")
+        .update({ last_error: removeError.message })
+        .eq("bucket", bucket)
+        .in("path", paths);
+      failed += paths.length;
+      continue;
+    }
+
+    // Storage reports what it actually removed. Treat only those as done; a path it did
+    // not confirm stays queued rather than being forgotten. A path already absent is
+    // also done -- the file is gone either way, and leaving it would retry forever.
+    const confirmed = new Set(
+      (removed ?? []).map((o: { name: string }) => o.name),
+    );
+    const done = paths.filter((p) => confirmed.has(p) || (removed ?? []).length === 0);
+
+    if (done.length > 0) {
+      await db.from("media_deletions").delete().eq("bucket", bucket).in(
+        "path",
+        done,
+      );
+    }
+    deleted += done.length;
+    failed += paths.length - done.length;
   }
 
-  const failed = paths.filter((p) => !done.includes(p));
-  if (failed.length > 0) {
-    await db
-      .from("media_deletions")
-      .update({ last_error: "Storage did not confirm removal" })
-      .in("path", failed);
-  }
-
-  return json({ deleted: done.length, failed: failed.length });
+  return json({ deleted, failed });
 }

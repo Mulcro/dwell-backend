@@ -7,8 +7,14 @@ import { handleGroupChallengeAction } from "./handler.ts";
 Deno.serve(async (req) => {
   try {
     const { url, serviceRoleKey } = supabaseConfig();
-    const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
-    return await handleGroupChallengeAction(req, db, createDispatch(url, serviceRoleKey));
+    const db = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
+    return await handleGroupChallengeAction(
+      req,
+      db,
+      createDispatch(url, serviceRoleKey),
+    );
   } catch (err) {
     return toErrorResponse(err);
   }

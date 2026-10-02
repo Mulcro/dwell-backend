@@ -51,7 +51,10 @@ Deno.test("a challenge runs from creation to completion", async () => {
   try {
     const created = await invoke(() =>
       handleCreateGroup(
-        post({ name: "Lifecycle Crew", plan_challenge_id: SEED_PLAN_ID }, alice.token),
+        post(
+          { name: "Lifecycle Crew", plan_challenge_id: SEED_PLAN_ID },
+          alice.token,
+        ),
         db,
       )
     );
@@ -94,7 +97,9 @@ Deno.test("a challenge runs from creation to completion", async () => {
       // Pacing is the only thing left holding the day: pretend its 24 hours elapsed.
       await db
         .from("day_instances")
-        .update({ opened_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() })
+        .update({
+          opened_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        })
         .eq("id", day!.id);
 
       await db.rpc("open_ready_next_days");
@@ -140,7 +145,10 @@ Deno.test("a challenge that goes quiet is prompted, then ended", async () => {
   try {
     const created = await invoke(() =>
       handleCreateGroup(
-        post({ name: "Quiet Crew", plan_challenge_id: SEED_PLAN_ID }, alice.token),
+        post(
+          { name: "Quiet Crew", plan_challenge_id: SEED_PLAN_ID },
+          alice.token,
+        ),
         db,
       )
     );
@@ -149,11 +157,19 @@ Deno.test("a challenge that goes quiet is prompted, then ended", async () => {
     await invoke(() => handleJoinGroup(post({ invite_token: body.invite_token }, bob.token), db));
 
     // Two days of silence already behind them; today's sweep is the third.
-    await db.from("groups").update({ consecutive_silent_days: 2 }).eq("id", groupId);
+    await db.from("groups").update({ consecutive_silent_days: 2 }).eq(
+      "id",
+      groupId,
+    );
 
     const dispatch = fakeDispatch();
     await invoke(() =>
-      handleDailyCronInactivityCheck(serviceRequest(), db, dispatch, serviceRoleKey())
+      handleDailyCronInactivityCheck(
+        serviceRequest(),
+        db,
+        dispatch,
+        serviceRoleKey(),
+      )
     );
 
     const { data: prompted } = await db
@@ -216,13 +232,21 @@ Deno.test({
 
       const created = await invoke(() =>
         handleCreateGroup(
-          post({ name: "Realtime Crew", plan_challenge_id: SEED_PLAN_ID }, alice.token),
+          post(
+            { name: "Realtime Crew", plan_challenge_id: SEED_PLAN_ID },
+            alice.token,
+          ),
           db,
         )
       );
       const body = await created.json();
       groupId = body.group_id;
-      await invoke(() => handleJoinGroup(post({ invite_token: body.invite_token }, bob.token), db));
+      await invoke(() =>
+        handleJoinGroup(
+          post({ invite_token: body.invite_token }, bob.token),
+          db,
+        )
+      );
 
       const { data: day } = await db
         .from("day_instances").select("id").eq("group_id", groupId).single();
@@ -240,7 +264,10 @@ Deno.test({
       // Wait for the subscription to actually be live rather than sleeping and hoping:
       // the first websocket connect can be slow, and a fixed delay makes this flaky.
       const subscribed = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("subscribe timed out")), 20_000);
+        const timer = setTimeout(
+          () => reject(new Error("subscribe timed out")),
+          20_000,
+        );
         watcher
           .channel(`day-${groupId}`)
           .on("postgres_changes", {
@@ -255,7 +282,9 @@ Deno.test({
               resolve();
             } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
               clearTimeout(timer);
-              const failure = new Error(`subscribe failed: ${status} ${err?.message ?? ""}`);
+              const failure = new Error(
+                `subscribe failed: ${status} ${err?.message ?? ""}`,
+              );
               reject(failure);
               onFailure(failure);
             }
@@ -264,7 +293,10 @@ Deno.test({
       await subscribed;
 
       const updateTimer = setTimeout(
-        () => onFailure(new Error("no realtime update within 20s of the reflection")),
+        () =>
+          onFailure(
+            new Error("no realtime update within 20s of the reflection"),
+          ),
         20_000,
       );
 
@@ -294,7 +326,9 @@ Deno.test({
         auth: { persistSession: false, autoRefreshToken: false },
         global: { headers: { Authorization: `Bearer ${alice.token}` } },
       });
-      const { data: visible } = await asAlice.from("reflections").select("id, content");
+      const { data: visible } = await asAlice.from("reflections").select(
+        "id, content",
+      );
       assertEquals(visible!.length, 0);
     } finally {
       await watcher.removeAllChannels();

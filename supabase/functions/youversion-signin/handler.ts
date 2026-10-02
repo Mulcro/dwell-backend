@@ -70,7 +70,9 @@ export async function handleYouVersionSignIn(
 }
 
 /** Supabase reports an existing email differently across versions; match on all of them. */
-function isAlreadyRegistered(error: { message?: string; code?: string; status?: number }): boolean {
+function isAlreadyRegistered(
+  error: { message?: string; code?: string; status?: number },
+): boolean {
   const message = (error.message ?? "").toLowerCase();
   return error.code === "email_exists" ||
     error.status === 422 ||

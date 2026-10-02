@@ -2,7 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
 
-const FREQUENCIES = ["daily", "weekdays", "three_per_week", "four_per_week", "custom"];
+const FREQUENCIES = [
+  "daily",
+  "weekdays",
+  "three_per_week",
+  "four_per_week",
+  "custom",
+];
 
 /**
  * POST /create-group
@@ -12,7 +18,10 @@ const FREQUENCIES = ["daily", "weekdays", "three_per_week", "four_per_week", "cu
  * Creates a group in `forming` plus the creator's membership row. The group stays
  * forming until someone joins; /join-group is what activates it and opens Day 1.
  */
-export async function handleCreateGroup(req: Request, db: SupabaseClient): Promise<Response> {
+export async function handleCreateGroup(
+  req: Request,
+  db: SupabaseClient,
+): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
 
@@ -26,21 +35,33 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
   // their weekend and not UTC's.
   const frequency = body.frequency === undefined ? "daily" : requireString(body, "frequency");
   if (!FREQUENCIES.includes(frequency)) {
-    throw new HttpError(400, `frequency must be one of: ${FREQUENCIES.join(", ")}`);
+    throw new HttpError(
+      400,
+      `frequency must be one of: ${FREQUENCIES.join(", ")}`,
+    );
   }
   const timezone = body.timezone === undefined ? "UTC" : requireString(body, "timezone");
   if (!isValidTimezone(timezone)) {
-    throw new HttpError(400, "timezone must be a valid IANA name, such as America/New_York");
+    throw new HttpError(
+      400,
+      "timezone must be a valid IANA name, such as America/New_York",
+    );
   }
 
   // custom carries its own day pattern; every other frequency has one built in, and
   // accepting a mask alongside them would leave two sources of truth disagreeing.
   const customDays = parseCustomDays(body.custom_days);
   if (frequency === "custom" && customDays === null) {
-    throw new HttpError(400, "custom_days is required when frequency is custom");
+    throw new HttpError(
+      400,
+      "custom_days is required when frequency is custom",
+    );
   }
   if (frequency !== "custom" && customDays !== null) {
-    throw new HttpError(400, "custom_days is only allowed when frequency is custom");
+    throw new HttpError(
+      400,
+      "custom_days is only allowed when frequency is custom",
+    );
   }
 
   const { data: plan } = await db
@@ -92,7 +113,10 @@ export async function handleCreateGroup(req: Request, db: SupabaseClient): Promi
   if (memberError) {
     // A group whose creator is not a member is unreachable by everyone, including them.
     // Undo rather than leave it stranded.
-    console.error("create-group member insert failed, rolling back", memberError);
+    console.error(
+      "create-group member insert failed, rolling back",
+      memberError,
+    );
     await db.from("groups").delete().eq("id", group.id);
     throw new HttpError(500, "Could not create group");
   }
@@ -119,12 +143,17 @@ function isValidTimezone(name: string): boolean {
 function parseCustomDays(value: unknown): number[] | null {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value) || value.length === 0) {
-    throw new HttpError(400, "custom_days must be a non-empty array of weekdays");
+    throw new HttpError(
+      400,
+      "custom_days must be a non-empty array of weekdays",
+    );
   }
 
   const days = [...new Set(value)];
   for (const day of days) {
-    if (typeof day !== "number" || !Number.isInteger(day) || day < 1 || day > 7) {
+    if (
+      typeof day !== "number" || !Number.isInteger(day) || day < 1 || day > 7
+    ) {
       throw new HttpError(
         400,
         "custom_days must contain whole numbers from 1 (Monday) to 7 (Sunday)",

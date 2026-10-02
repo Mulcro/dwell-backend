@@ -7,7 +7,9 @@ import { handleDailyCronInactivityCheck } from "./handler.ts";
 Deno.serve(async (req) => {
   try {
     const { url, serviceRoleKey } = supabaseConfig();
-    const db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+    const db = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
     return await handleDailyCronInactivityCheck(
       req,
       db,

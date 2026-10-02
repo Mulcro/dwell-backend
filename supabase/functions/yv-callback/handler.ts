@@ -19,7 +19,13 @@ const APP_SCHEME_URL = "dwell://auth-callback";
 const YV_CALLBACK = "https://api.youversion.com/auth/callback";
 
 /** Only what the OAuth response is allowed to carry. */
-const FORWARDED = ["code", "state", "error", "error_description", "granted_permissions"];
+const FORWARDED = [
+  "code",
+  "state",
+  "error",
+  "error_description",
+  "granted_permissions",
+];
 
 export function handleYvCallback(
   req: Request,
@@ -81,6 +87,9 @@ function redirect(target: string, message: string): Response {
 function escapeHtml(value: string): string {
   return value.replace(
     /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
   );
 }

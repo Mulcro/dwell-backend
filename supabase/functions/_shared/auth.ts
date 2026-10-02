@@ -36,7 +36,10 @@ export function secretsMatch(a: string, b: string): boolean {
  * one arrives depends on who is calling. Comparing against a single key silently
  * rejects a legitimate caller -- which is exactly how every pg_net dispatch broke.
  */
-export function requireServiceRole(req: Request, keys: string | string[]): void {
+export function requireServiceRole(
+  req: Request,
+  keys: string | string[],
+): void {
   const token = bearerToken(req);
   const accepted = (typeof keys === "string" ? [keys] : keys).filter((k) => k.length > 0);
 
@@ -51,11 +54,16 @@ export function requireServiceRole(req: Request, keys: string | string[]): void 
 }
 
 export interface UserLookup {
-  getUser(token: string): Promise<{ data: { user: { id: string } | null }; error: unknown }>;
+  getUser(
+    token: string,
+  ): Promise<{ data: { user: { id: string } | null }; error: unknown }>;
 }
 
 /** Resolves the caller from their session token, or rejects with 401. */
-export async function requireUser(req: Request, auth: UserLookup): Promise<string> {
+export async function requireUser(
+  req: Request,
+  auth: UserLookup,
+): Promise<string> {
   const token = bearerToken(req);
   if (!token) throw new HttpError(401, "Unauthorized");
 

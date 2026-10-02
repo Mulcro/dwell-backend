@@ -10,6 +10,10 @@
 set -euo pipefail
 
 API="${SUPABASE_URL:-http://127.0.0.1:54321}"
+# The two keys below are the Supabase CLI's FIXED LOCAL DEVELOPMENT keys, printed by
+# `supabase start` and identical in every CLI install. They are public by design, carry
+# iss=supabase-demo and no project ref, and are only valid against 127.0.0.1. They are
+# not credentials for any deployed project. Secret scanners flag them; this is why.
 ANON="${SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}"
 SERVICE="${SUPABASE_SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}"
 SUPABASE_BIN="${SUPABASE_BIN:-supabase}"

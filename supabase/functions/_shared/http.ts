@@ -59,8 +59,14 @@ export function optionalInt(
 ): number | undefined {
   const value = body[field];
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
-    throw new HttpError(400, `${field} must be an integer between ${min} and ${max}`);
+  if (
+    typeof value !== "number" || !Number.isInteger(value) || value < min ||
+    value > max
+  ) {
+    throw new HttpError(
+      400,
+      `${field} must be an integer between ${min} and ${max}`,
+    );
   }
   return value;
 }

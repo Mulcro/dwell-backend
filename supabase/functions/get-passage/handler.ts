@@ -30,7 +30,10 @@ export async function handleGetPassage(
   // USFM ids only: BOOK.CHAPTER[.VERSE[-VERSE]]. Rejecting anything else keeps a client
   // bug from turning into an arbitrary upstream request.
   if (!/^[A-Z0-9]{3}\.\d+(\.\d+(-\d+)?)?$/i.test(ref)) {
-    throw new HttpError(400, "ref must be a USFM id, such as PSA.34.18 or ROM.5.3-5");
+    throw new HttpError(
+      400,
+      "ref must be a USFM id, such as PSA.34.18 or ROM.5.3-5",
+    );
   }
 
   const bibleId = config.bibleId;
@@ -87,12 +90,18 @@ export function youVersionSource(appKey: string): PassageSource {
       if (!res.ok) {
         // 403 here means the bible is not licensed to this app key, which is a
         // configuration problem rather than anything the caller did.
-        console.error("youversion passages failed", res.status, `bible=${bibleId} ref=${ref}`);
+        console.error(
+          "youversion passages failed",
+          res.status,
+          `bible=${bibleId} ref=${ref}`,
+        );
         throw new HttpError(502, "Bible service unavailable");
       }
 
       const data = await res.json() as { reference?: string; content?: string };
-      if (!data.content) throw new HttpError(502, "Bible service returned no text");
+      if (!data.content) {
+        throw new HttpError(502, "Bible service returned no text");
+      }
 
       return { reference: data.reference ?? ref, content: data.content };
     },

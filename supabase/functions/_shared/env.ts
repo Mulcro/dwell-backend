@@ -38,7 +38,8 @@ export function serviceRoleKeys(): string[] {
       for (const v of values) {
         if (typeof v === "string" && v) keys.add(v);
         else if (
-          v && typeof v === "object" && typeof (v as { api_key?: string }).api_key === "string"
+          v && typeof v === "object" &&
+          typeof (v as { api_key?: string }).api_key === "string"
         ) {
           keys.add((v as { api_key: string }).api_key);
         }
