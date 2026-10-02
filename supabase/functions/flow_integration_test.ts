@@ -370,6 +370,7 @@ Deno.test("client-facing functions", async (t) => {
         // Without cleanup the pending row would answer every retry with 409 forever.
         const brokenAi = {
           moderate: () => Promise.reject(new Error("upstream blip")),
+          moderateImage: () => Promise.reject(new Error("upstream blip")),
           generateJson: () => Promise.resolve({}),
           generateText: () => Promise.resolve(""),
         };
@@ -402,7 +403,10 @@ Deno.test("client-facing functions", async (t) => {
       // what matters here is that everything the client CLAIMS about the object is
       // checked before it is attached to a reflection.
       const path = `${bob.id}/${crypto.randomUUID()}.m4a`;
-      const store = { exists: (p: string) => Promise.resolve(p === path) };
+      const store = {
+        exists: (p: string) => Promise.resolve(p === path),
+        signedUrl: () => Promise.resolve("https://signed.test/a"),
+      };
       const withMedia = {
         day_instance_id: dayInstanceId,
         media_type: "voice",

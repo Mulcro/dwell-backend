@@ -21,7 +21,10 @@ export async function invoke(fn: () => Promise<Response>): Promise<Response> {
   }
 }
 
-// Local-stack defaults. These are the CLI's fixed development keys, not secrets.
+// Local-stack defaults. These are the Supabase CLI's FIXED LOCAL DEVELOPMENT keys,
+// printed by `supabase start` and identical in every CLI install: public by design,
+// iss=supabase-demo, no project ref, valid only against 127.0.0.1. Not credentials for
+// any deployed project. Secret scanners flag them; this is why.
 const LOCAL_URL = "http://127.0.0.1:54321";
 const LOCAL_SERVICE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";

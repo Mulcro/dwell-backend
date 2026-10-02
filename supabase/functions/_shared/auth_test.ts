@@ -70,14 +70,16 @@ Deno.test("requireServiceRole accepts any of the project's server-side keys", ()
   // A project can carry the legacy service_role JWT and newer sb_secret_... keys at the
   // same time, and pg_net may present either. Both must be admitted.
   const legacy = "eyJhbGciOiJIUzI1NiJ9.legacy-service-role.sig";
-  const modern = "sb_secret_abcdefghijklmnopqrstuvwxyz";
+  // Shaped like a real key so the comparison is meaningful, worded so a secret
+  // scanner can see at a glance that it is not one.
+  const modern = "sb_secret_EXAMPLE_NOT_A_REAL_KEY_000000";
   const keys = [modern, legacy];
 
   requireServiceRole(withAuth(`Bearer ${legacy}`), keys);
   requireServiceRole(withAuth(`Bearer ${modern}`), keys);
 
   assertThrows(
-    () => requireServiceRole(withAuth("Bearer sb_publishable_not_a_secret"), keys),
+    () => requireServiceRole(withAuth("Bearer sb_publishable_EXAMPLE_NOT_A_REAL_KEY"), keys),
     HttpError,
     "Unauthorized",
   );
