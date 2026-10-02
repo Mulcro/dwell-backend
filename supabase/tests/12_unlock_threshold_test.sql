@@ -2,7 +2,7 @@
 -- caller's own approved reflection counts toward it. Posting alone is not enough.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(9);
 
 insert into auth.users (id) values
   ('11111111-1111-1111-1111-111111111111'),  -- alice
@@ -71,10 +71,17 @@ select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-1111111
 
 select is((select count(*)::int from reflections), 3,
   'now the whole day opens to alice');
-select lives_ok(
+-- Replies now carry audio and images, so they cannot be a plain insert: submit-comment
+-- moderates first and is the only way in. What the unlock rule still decides is whether
+-- you may reply at all, and that is exactly the reflection being visible to you -- which
+-- is the check submit-comment makes, through this same policy.
+select is(
+  (select count(*)::int from reflections where id = 'eeeeeeee-2222-2222-2222-222222222222'),
+  1, 'and the reflection is now visible, so replying is allowed');
+select throws_ok(
   $$insert into comments (reflection_id, user_id, content)
     values ('eeeeeeee-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','well said')$$,
-  'and commenting is allowed');
+  '42501', null, 'but only through submit-comment, never a direct insert');
 
 -- A member who never posted stays locked out even though the group cleared the day.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000000"}', true);

@@ -97,10 +97,13 @@ select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-1111111
 select is((select count(*)::int from reflections), 2,
   'once both are approved the day unlocks for alice');
 
-select lives_ok(
+-- Replies carry audio and images now, so they go through submit-comment, which moderates
+-- first. The unlock rule still decides whether you may reply, and it does that by making
+-- the parent reflection visible -- which is the check submit-comment makes.
+select throws_ok(
   $$insert into comments (reflection_id, user_id, content)
     values ('eeeeeeee-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','encouragement')$$,
-  'can comment on an unlocked reflection'
+  '42501', null, 'a reply can no longer be inserted directly, moderated or not'
 );
 
 select lives_ok(
