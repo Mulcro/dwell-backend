@@ -102,6 +102,12 @@ export async function handleSubmitComment(
     throw new HttpError(403, "You can't reply to this yet");
   }
 
+  // The client may not send a language yet, so fall back to what the author reads. A
+  // wrong language label would send the translation call off in the wrong direction.
+  const language = typeof body.language === "string" && body.language.trim() !== ""
+    ? body.language.trim()
+    : await authorLanguage(db, userId);
+
   const content = typeof body.content === "string" ? body.content.trim() : null;
   const transcript = typeof body.transcript === "string" ? body.transcript.trim() : null;
 
@@ -138,6 +144,17 @@ export async function handleSubmitComment(
     throw new HttpError(422, "That reply can't be posted");
   }
 
+  // A voice reply is carried by its transcript, so that is what gets translated -- the
+  // audio obviously stays in the original language. Same as a voice reflection.
+  const body_text = mediaType === "voice" ? transcript : content;
+  const translated = await translateForGroup(
+    db,
+    ai,
+    reflectionId,
+    body_text as string,
+    language,
+  );
+
   const { data: inserted, error } = await db
     .from("comments")
     .insert({
@@ -146,6 +163,8 @@ export async function handleSubmitComment(
       content,
       transcript,
       media_type: mediaType,
+      language,
+      translated_text: translated,
       ...media,
     })
     .select("id")
@@ -160,6 +179,86 @@ export async function handleSubmitComment(
   }
 
   return json({ comment_id: inserted.id }, 201);
+}
+
+/** What the author reads, used when the client does not label the reply's language. */
+async function authorLanguage(
+  db: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const { data } = await db
+    .from("users")
+    .select("preferred_language")
+    .eq("id", userId)
+    .maybeSingle();
+  return data?.preferred_language ?? "en";
+}
+
+/**
+ * Translates a reply into every other language its group reads.
+ *
+ * Returns null when everyone already reads the author's language, which is the common
+ * case and costs nothing. Failure is swallowed on purpose: translation is a courtesy and
+ * must never be the reason a reply fails to post.
+ */
+async function translateForGroup(
+  db: SupabaseClient,
+  ai: Ai,
+  reflectionId: string,
+  text: string,
+  language: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const { data: reflection } = await db
+      .from("reflections")
+      .select("day_instance_id")
+      .eq("id", reflectionId)
+      .maybeSingle();
+    if (!reflection) return null;
+
+    const { data: day } = await db
+      .from("day_instances")
+      .select("group_id")
+      .eq("id", reflection.day_instance_id)
+      .maybeSingle();
+    if (!day) return null;
+
+    const { data: members } = await db
+      .from("users")
+      .select("preferred_language, group_members!inner(group_id)")
+      .eq("group_members.group_id", day.group_id);
+
+    const targets = [
+      ...new Set(
+        (members ?? [])
+          .map((m: { preferred_language: string }) => m.preferred_language)
+          .filter((lang: string) => lang && lang !== language),
+      ),
+    ];
+    if (targets.length === 0) return null;
+
+    const result = await ai.generateJson(
+      [
+        "You are translating a short reply in a small Bible-reading group.",
+        `Return JSON with one key, translations: an object keyed by ${JSON.stringify(targets)}.`,
+        `The reply is in ${language}:`,
+        text,
+      ].join("\n"),
+    );
+
+    const translations = result.translations;
+    const payload: Record<string, unknown> = {};
+    if (translations && typeof translations === "object") {
+      for (const lang of targets) {
+        const value = (translations as Record<string, unknown>)[lang];
+        if (typeof value === "string") payload[lang] = value;
+      }
+    }
+    return Object.keys(payload).length > 0 ? payload : null;
+  } catch (err) {
+    console.error("submit-comment translation failed, posting without it", err);
+    return null;
+  }
 }
 
 /** Text is read; an image is looked at, together with whatever was said about it. */

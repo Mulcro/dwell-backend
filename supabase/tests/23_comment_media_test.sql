@@ -2,7 +2,7 @@
 -- these assertions mirror theirs.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(11);
 
 insert into auth.users (id, raw_user_meta_data) values
   ('11111111-1111-1111-1111-111111111111', '{"name":"Poster"}'::jsonb),
@@ -60,6 +60,11 @@ select lives_ok(
 delete from comments where user_id = '22222222-2222-2222-2222-222222222222';
 select is((select count(*)::int from media_deletions where path = '22222222/b.jpg'),
   1, 'and deleting a reply queues its upload for removal');
+
+-- Item 44: a reply reaches each reader in their own language, like a reflection.
+select has_column('public', 'comments', 'language', 'a reply records what it was written in');
+select has_column('public', 'comments', 'translated_text',
+  'and carries translations keyed by the language translated INTO');
 
 select * from finish();
 rollback;
