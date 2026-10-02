@@ -213,6 +213,7 @@ Deno.test("a valid waveform is stored with the recording", async () => {
 const photo = (extra: Record<string, unknown> = {}) => ({
   day_instance_id: DAY,
   media_type: "photo",
+  content: "what this picture meant to me today",
   language: "en",
   media_path: `${USER}/a.jpg`,
   media_mime: "image/jpeg",
@@ -229,13 +230,19 @@ Deno.test("a photo reflection is moderated by looking at the image", async () =>
   assertEquals((await res.json()).moderation_status, "approved");
 });
 
-Deno.test("a photo needs no caption", async () => {
-  // Unlike voice, a photo carries its own meaning; there is no transcript to require.
+Deno.test("a photo must be accompanied by words", async () => {
+  // A picture posted into a group with nothing said about it is not a reflection, and
+  // the caption is also what translation and the group pulse work from.
   const db = fakeDbWithMedia();
   const res = await invoke(() =>
-    handleSubmitReflection(post(photo()), db.client, fakeAi(), present)
+    handleSubmitReflection(post(photo({ content: undefined })), db.client, fakeAi(), present)
   );
-  assertEquals(res.status, 200);
+  assertEquals(res.status, 400);
+
+  const blank = await invoke(() =>
+    handleSubmitReflection(post(photo({ content: "   " })), db.client, fakeAi(), present)
+  );
+  assertEquals(blank.status, 400, "whitespace is not words");
 });
 
 Deno.test("a flagged photo is destroyed", async () => {

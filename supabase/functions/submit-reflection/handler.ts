@@ -92,12 +92,13 @@ export async function handleSubmitReflection(
     throw new HttpError(400, "media_type must be text, voice or photo");
   }
 
-  // Voice arrives already transcribed on-device; either way there must be words -- except
-  // for a photo, which carries its own meaning and may stand without a caption.
+  // Voice arrives already transcribed on-device. Every kind needs words: a photo posted
+  // into a group with nothing said about it is not a reflection, and the caption is also
+  // what translation and the group pulse have to work with.
   const content = typeof body.content === "string" ? body.content.trim() : null;
   const transcript = typeof body.transcript === "string" ? body.transcript.trim() : null;
   const text = mediaType === "voice" ? transcript : content;
-  if (!text && mediaType !== "photo") {
+  if (!text) {
     throw new HttpError(
       400,
       mediaType === "voice" ? "transcript is required" : "content is required",
@@ -180,11 +181,7 @@ export async function handleSubmitReflection(
       });
     }
 
-    // A photo without a caption has nothing to translate, tag or respond to. Skipping is
-    // honest; an empty prompt would have the model invent a reaction to nothing.
-    const enrichment = text
-      ? await enrich(db, ai, day.group_id, text, language)
-      : { sentiment_tag: null, translated_text: null, ai_response: null };
+    const enrichment = await enrich(db, ai, day.group_id, text, language);
     const isLate = Date.now() > day.windowEndsAt;
 
     // One UPDATE carries the enrichment and the approval together, so the trigger sees a
@@ -358,8 +355,7 @@ async function validateMedia(
     throw new HttpError(400, "A text reflection cannot carry a recording");
   }
   // Moderation, translation and the group pulse all read the transcript. Storing audio
-  // without one would put unreadable, unmoderated content in front of the group. A photo
-  // is exempt: it is moderated by being looked at.
+  // without one would put unreadable, unmoderated content in front of the group.
   if (mediaType === "voice" && !transcript) {
     throw new HttpError(400, "transcript is required when sending a recording");
   }

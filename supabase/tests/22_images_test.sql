@@ -2,7 +2,7 @@
 -- sees them; these assertions cover the parts the database is responsible for.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(11);
 
 select ok('photo' = any (enum_range(null::media_type)::text[]),
   'a reflection can be a photo');
@@ -42,6 +42,39 @@ select set_eq(
     where c.conrelid = 'public.media_deletions'::regclass and c.contype = 'p'$$,
   $$values ('bucket'), ('path')$$,
   'the deletion queue is keyed by bucket and path');
+
+-- A photo must be accompanied by words. The old constraint demanded a TRANSCRIPT for any
+-- non-text reflection carrying media, written when voice was the only kind -- which would
+-- have refused every photo at insert.
+insert into auth.users (id, raw_user_meta_data)
+values ('abababab-abab-abab-abab-abababababab', '{"name":"Snapper"}'::jsonb);
+insert into groups (id, name, plan_challenge_id, created_by)
+values ('acacacac-acac-acac-acac-acacacacacac', 'Photos',
+        '00000000-0000-0000-0000-0000000000a1', 'abababab-abab-abab-abab-abababababab');
+insert into day_instances (id, group_id, day_index, date, passage_ref)
+values ('adadadad-adad-adad-adad-adadadadadad', 'acacacac-acac-acac-acac-acacacacacac',
+        1, current_date, 'PSA.34.18');
+
+select lives_ok(
+  $$insert into reflections (user_id, day_instance_id, media_type, content, language,
+                             media_path, media_mime)
+    values ('abababab-abab-abab-abab-abababababab', 'adadadad-adad-adad-adad-adadadadadad',
+            'photo', 'what this meant to me', 'en', 'abababab/a.jpg', 'image/jpeg')$$,
+  'a photo with words is accepted');
+
+select throws_ok(
+  $$insert into reflections (user_id, day_instance_id, media_type, language,
+                             media_path, media_mime)
+    values ('abababab-abab-abab-abab-abababababab', 'adadadad-adad-adad-adad-adadadadadad',
+            'photo', 'en', 'abababab/b.jpg', 'image/jpeg')$$,
+  '23514', null, 'a photo with nothing said about it is refused');
+
+select throws_ok(
+  $$insert into reflections (user_id, day_instance_id, media_type, content, language,
+                             media_path, media_mime)
+    values ('abababab-abab-abab-abab-abababababab', 'adadadad-adad-adad-adad-adadadadadad',
+            'photo', '   ', 'en', 'abababab/c.jpg', 'image/jpeg')$$,
+  '23514', null, 'and whitespace is not words');
 
 select * from finish();
 rollback;
