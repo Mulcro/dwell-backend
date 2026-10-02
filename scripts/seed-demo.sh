@@ -141,5 +141,19 @@ sql "update groups
       where type = 'inactivity_prompt'
         and group_id in (select id from groups where name like 'Demo:%');" > /dev/null
 
+# ------------------------------------------------------------- demo languages
+# A predictable language per account, so the bilingual part of the demo is repeatable
+# rather than something to discover live. demo-unlocked-b reads French, which puts a
+# French speaker in the one group whose day is unlocked -- the screen where translated
+# reflections, replies and the group pulse are all visible at once.
+#
+# Set explicitly rather than left to the device locale: the client seeds this field from
+# the phone, so without this the demo's languages depend on which phone is in your hand.
+sql "update users set preferred_language = 'en'
+      where id in (select id from auth.users where email like 'demo-%@dwell.test');
+     update users set preferred_language = 'fr'
+      where id in (select id from auth.users where email = 'demo-unlocked-b@dwell.test');" > /dev/null
+
 echo
+echo "demo-unlocked-b reads French, so Demo: Unlocked shows translation end to end"
 echo "re-run this shortly before demoing; the crons drift the states over a few days"
