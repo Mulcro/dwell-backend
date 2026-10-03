@@ -157,7 +157,11 @@ create table plan_challenges (
   source_type source_type not null default 'custom',
   day_count int not null,
   youversion_plan_id text,      -- null for custom "verse a day" challenges; set when based on a real YouVersion plan
-  youversion_deep_link text     -- optional tap-out to the full plan in the YouVersion app
+  youversion_deep_link text,    -- optional tap-out to the full plan in the YouVersion app
+  image_path text,              -- cover art: object key in the public plan-images bucket
+  description text,             -- one or two sentences for the plan detail screen
+  key_verse text,               -- verse body without quote marks; the client adds them
+  key_verse_ref text            -- human-readable reference for key_verse, e.g. Psalm 46:10
 );
 
 -- Per-day passage list for a plan. Seeded once by the mock PlanService (see 3.4), which stands in
@@ -168,8 +172,15 @@ create table plan_days (
   plan_challenge_id uuid not null references plan_challenges(id) on delete cascade,
   day_index int not null,
   passage_ref text not null,
+  title text,                   -- the day's theme line ("Stop", "Listen"), shown beside the passage
   primary key (plan_challenge_id, day_index)
 );
+
+-- The catalogue holds five plans: the two from the first redesign (When Life Gets Hard, The
+-- Psalms: A Roadmap to Resilience), which carry no description, and the three the 02b
+-- Plans screens define with full copy -- Be Still (3 days), Better Together (7) and Abide
+-- (14). Each plan's cover is drawn by scripts/make-plan-cover.py and committed under
+-- assets/plan-images/ before being uploaded with the service role.
 
 create table groups (
   id uuid primary key default gen_random_uuid(),
