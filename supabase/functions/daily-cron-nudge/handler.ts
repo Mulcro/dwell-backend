@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
+import type { Dispatch } from "../_shared/dispatch.ts";
 import { json } from "../_shared/http.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -15,19 +16,21 @@ const APPROACHING_MS = 6 * 60 * 60 * 1000;
  * approved reflection. Runs often so each person is reached during their own waking
  * hours; timezone is used for nothing else.
  *
- * MVP: delivery is stubbed. A nudge is written as an ai_insights row for in-app display
- * rather than sent to APNs (design doc 5.3).
+ * A nudge is written as an ai_insights row, which is what the app shows, and the same
+ * words are then handed to send-push for the member's phone (design doc 5.3). The row
+ * is the record; the push is a courtesy that may or may not land.
  */
 export async function handleDailyCronNudge(
   req: Request,
   db: SupabaseClient,
+  dispatch: Dispatch,
   serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
 
   const { data: days, error } = await db
     .from("day_instances")
-    .select("id, group_id, opened_at, groups!inner(challenge_status)")
+    .select("id, group_id, opened_at, groups!inner(challenge_status, name)")
     .eq("status", "open")
     .eq("groups.challenge_status", "active");
 
@@ -84,18 +87,28 @@ export async function handleDailyCronNudge(
       if (sent >= 2) continue;
       if (sent >= 1 && !groupIsSilent) continue;
 
+      const content = groupIsSilent
+        ? "Your group has gone quiet on this one. A few words from you would restart it."
+        : "Today's passage is still waiting for you. Even one sentence counts.";
+
       const { error: insertError } = await db.from("ai_insights").insert({
         group_id: day.group_id,
         day_instance_id: day.id,
         target_user_id: member.user_id,
         scope: "day_instance",
         type: "nudge",
-        content: groupIsSilent
-          ? "Your group has gone quiet on this one. A few words from you would restart it."
-          : "Today's passage is still waiting for you. Even one sentence counts.",
+        content,
       });
+      if (insertError) continue;
+      written++;
 
-      if (!insertError) written++;
+      // The same words, on the phone. Titled with the group so a member of two groups
+      // knows which one is waiting.
+      await dispatch("send-push", {
+        user_id: member.user_id,
+        title: (day.groups as unknown as { name: string }).name,
+        body: content,
+      });
     }
   }
 

@@ -138,7 +138,7 @@ Deno.test("system-triggered functions", async (t) => {
           invoke(() => handleGenerateGroupPulse(unauthorized, db, fakeAi(), key())),
           invoke(() => handleEndOfChallengeSummary(unauthorized, db, fakeAi(), key())),
           invoke(() => handleDailyCronAutoskip(unauthorized, db, fakeDispatch(), key())),
-          invoke(() => handleDailyCronNudge(unauthorized, db, key())),
+          invoke(() => handleDailyCronNudge(unauthorized, db, fakeDispatch(), key())),
           invoke(() =>
             handleDailyCronInactivityCheck(
               unauthorized,
@@ -460,7 +460,7 @@ Deno.test("system-triggered functions", async (t) => {
         );
         const f = track(await makeGroup(db, [alice], { openedAgo: 23 * HOUR }));
 
-        await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+        await invoke(() => handleDailyCronNudge(serviceRequest(), db, fakeDispatch(), key()));
 
         const { data: nudges } = await db
           .from("ai_insights")
@@ -468,7 +468,7 @@ Deno.test("system-triggered functions", async (t) => {
         assertEquals(nudges!.length, 1);
 
         // Runs every 15 minutes: it must not nudge the same person again.
-        await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+        await invoke(() => handleDailyCronNudge(serviceRequest(), db, fakeDispatch(), key()));
         const { count } = await db
           .from("ai_insights")
           .select("id", { count: "exact", head: true })
@@ -484,7 +484,7 @@ Deno.test("system-triggered functions", async (t) => {
       );
       const f = track(await makeGroup(db, [bob], { openedAgo: 23 * HOUR }));
 
-      await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+      await invoke(() => handleDailyCronNudge(serviceRequest(), db, fakeDispatch(), key()));
 
       const { count } = await db
         .from("ai_insights")
@@ -501,7 +501,7 @@ Deno.test("system-triggered functions", async (t) => {
       const f = track(await makeGroup(db, [alice], { openedAgo: 23 * HOUR }));
       await addReflection(db, f.dayId, alice, "approved");
 
-      await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+      await invoke(() => handleDailyCronNudge(serviceRequest(), db, fakeDispatch(), key()));
 
       const { count } = await db
         .from("ai_insights")
