@@ -16,7 +16,7 @@ Technical design for Dwell's backend — written to be handed directly to **Clau
 | AI | OpenAI, tiered — cheap/fast model for classification, mid-tier for generation |
 | Moderation | OpenAI Moderation endpoint (free), standalone from the main LLM call |
 | Speech-to-text | On-device Apple Speech framework — client-side only |
-| Push notifications | Nudge decision logic is built for MVP; delivery is stubbed (writes an in-app nudge record instead of sending). Raw APNs via a provider (.p8) auth key from Edge Functions is the post-hackathon path (see 5.3) |
+| Push notifications | Live. daily-cron-nudge writes the in-app nudge row, then hands the same words to send-push, which delivers over raw APNs with a provider (.p8) token. Best effort: a missing or dead token never fails the nudge (see 5.3) |
 
 ---
 
@@ -46,6 +46,7 @@ Not part of the public client-facing surface — invoked only by pg_cron, a data
 | --- | --- | --- |
 | /generate-group-pulse | pg_net POST from the check-day-threshold DB trigger, service-role authenticated | Fetches the day's approved reflections only, one LLM call synthesizing cross-member themes, writes an ai_insights row (group_pulse) |
 | /daily-cron-nudge | pg_cron, every 15 min | Decides who to nudge: anyone approaching or past their local day-window (day_instances.opened_at + 24h, sent only during waking hours per users.timezone) without a reflection; a second pass flags the escalated "everyone's quiet" variant after continued silence. MVP: writes the nudge as an ai_insights row (type 'nudge', target_user_id set) for in-app display rather than sending a real push (see 5.3) |
+| /send-push | Another function, service-role authenticated (today: daily-cron-nudge, once per nudge row) | { user_id, title, body } → { delivered, reason? }. Looks up users.push_token, POSTs one alert to APNs with the group name as title, and on a 410 nulls the token so a dead device is not retried every tick. No token or a refusal returns delivered: false; it never raises |
 | /daily-cron-autoskip | pg_cron, daily 00:15 UTC | Sole writer of consecutive_below_threshold_count: increments it once per day for each active group's current below-threshold day, and once it hits the group's auto_skip_after_days, marks that day missed, opens the next day, and resets the counter to 0 |
 | /daily-cron-inactivity-check | pg_cron, daily 00:30 UTC | At 3 consecutive silent days group-wide, surfaces the Continue/Pause/End prompt to every member (once, not re-fired while pending). The same job runs the longer-horizon sweep that flips 14-day-silent, non-completed groups to expired_incomplete and fires end-of-challenge-summary |
 | /weekly-cron-leaderboard | pg_cron, weekly Monday 00:00 UTC | Computes each member's own participation_score for the past 7 days per group |
@@ -549,7 +550,7 @@ Client (Swift app — Info.plist / xcconfig, not committed):
 Supabase Edge Functions (supabase secrets set):
 
 - OPENAI_API_KEY
-- APNS_AUTH_KEY_P8 (base64-encoded .p8 contents), APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID (needed only when push delivery is un-stubbed post-hackathon)
+- APNS_AUTH_KEY_P8 (base64-encoded .p8 contents), APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_HOST (api.push.apple.com for TestFlight and App Store builds, api.sandbox.push.apple.com for builds run from Xcode), read by send-push
 - SUPABASE_SERVICE_ROLE_KEY (auto-injected in deployed functions; set manually only for local dev)
 
 Supabase Vault (for the in-database functions that call Edge Functions via pg_net):
@@ -571,15 +572,15 @@ Supabase Dashboard config (not code):
 | daily-cron-inactivity-check | `30 0 * * *` (00:30 UTC daily) |
 | weekly-cron-leaderboard | `0 0 * * 1` (Monday 00:00 UTC) |
 
-## 5.3 Push Notifications (APNs): stubbed for MVP
+## 5.3 Push Notifications (APNs)
 
-**MVP decision: build the nudge decision logic, stub the delivery.** The functions that decide who to nudge and what to say are real and demoable; instead of sending to Apple they write the nudge as an ai_insights row (type 'nudge', target_user_id set) that the app renders in-app. This keeps the "the app reaches out to you" story working on screen without the APNs plumbing, which is hard to show in a 90-second demo anyway. Everything below is the post-hackathon delivery path; push_token is still captured now so no migration is needed later.
+**Delivery is live, and the in-app row stays the record.** The functions that decide who to nudge and what to say write the nudge as an ai_insights row (type 'nudge', target_user_id set) that the app renders, exactly as in the MVP; daily-cron-nudge then dispatches the same words to send-push, which is the single place that talks to Apple. A member with no token, or whose device Apple no longer knows, simply gets no push -- the nudge still exists for them in the app, so delivery can never be the reason a nudge is lost.
 
 - Device tokens register client-side on first launch, written to users.push_token via the direct PostgREST update in the Auth flow (kept even while delivery is stubbed).
 - Auth to Apple: a provider JWT auth key (.p8), not a certificate, doesn't expire, one key for all environments.
-- Each function that pushes builds a fresh ES256 JWT (cache ~55 min) and POSTs to `https://api.push.apple.com/3/device/<device_token>` with that JWT as bearer and APNS_BUNDLE_ID as the apns-topic header. Deno's native fetch handles HTTP/2, no extra library.
-- **Sandbox vs production endpoint:** a build installed from Xcode registers a sandbox token, which returns BadDeviceToken against [api.push.apple.com](http://api.push.apple.com). Dev and demo builds must POST to `https://api.sandbox.push.apple.com`; only TestFlight and App Store builds use the production host. This fails silently, so switch host by build config.
-- A 410 response nulls out that user's push_token so dead tokens stop being retried.
+- send-push builds an ES256 provider JWT from the .p8 (`_shared/apns.ts`, cached for 55 minutes since Apple refuses tokens older than an hour) and POSTs to `https://<APNS_HOST>/3/device/<device_token>` with that JWT as bearer, APNS_BUNDLE_ID as the apns-topic header and `{ aps: { alert: { title, body }, sound } }` as the body. Deno's native fetch handles HTTP/2, no extra library.
+- **Sandbox vs production endpoint:** a build installed from Xcode registers a sandbox token, which returns BadDeviceToken against api.push.apple.com; only TestFlight and App Store builds carry production tokens. The host is the APNS_HOST secret, so switching environments is one `supabase secrets set`. BadDeviceToken is deliberately NOT treated as a dead token, since it usually means the wrong host rather than a gone device.
+- A 410 (Unregistered) response nulls out that user's push_token so dead tokens stop being retried. Every other refusal is logged and returned as delivered: false.
 
 ## 5.4 Project Setup — Who Does What
 
@@ -604,7 +605,7 @@ Scripted, Claude Code — once handed the access token + project ref:
 # 6. Resolved Design Decisions
 
 - **Auth (MVP sequencing, decided 9/20)**: ship standard Supabase OAuth (Apple/Google) first so the core loop is unblocked; add YouVersion login as an option later via the Custom OIDC Provider (custom:youversion) + signInWithOAuth (see Auth above). When picking YouVersion up, verify against their actual dashboard: whether they publish an OIDC discovery doc, and whether their OAuth client issues a secret at all (fall back to manual OAuth2 config if not). Nothing else in this doc depends on which provider is live.
-- **Push notifications**: nudge decision logic is built for MVP; delivery is stubbed to in-app ai_insights rows. Raw APNs via a .p8 key from Edge Functions is the post-hackathon path (5.3).
+- **Push notifications**: live. Nudges are written as in-app ai_insights rows and pushed over raw APNs via send-push (5.3).
 - **check-day-threshold execution model**: synchronous Postgres trigger that fires on reflection approval (not insert), counts only approved reflections, guards the member-count division, and dispatches the LLM-dependent group-pulse step via pg_net (triggers can't await external calls) only when its own call flips the day.
 - **Day pacing**: advancement is threshold-gated and paced one-per-24h via open_ready_next_days (pg_cron). The rolling 24h window (day_instances.opened_at + 24h, per member) drives on-time vs is_late and nudge timing; timezone is used only to send nudges at humane local hours.
 - **Moderation ordering**: reflections insert as 'pending' and are gated on the flip to 'approved', so flagged content can never count toward threshold or reach group-pulse. Direct client insert on reflections is revoked to enforce this.
