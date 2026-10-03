@@ -69,6 +69,12 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/daily-c
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" -H 'Content-Type: application/json' -d '{}')
 [ "$code" = "200" ] || fail "daily-cron-autoskip refused the service role (HTTP $code)"
 
+echo "debug-day does not exist while the debug secret is unset..."
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/debug-day" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d "{\"group_id\":\"$group\",\"action\":\"advance\"}")
+[ "$code" = "404" ] || fail "debug-day answered while disabled (HTTP $code)"
+
 echo "send-push is not reachable with a user token..."
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/send-push" \
   -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}')

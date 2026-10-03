@@ -17,9 +17,9 @@
 #                                                      # UNMET, for the no-engagement
 #                                                      # walkthrough; nothing advances
 #
-# Needs SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN in .env. Deliberately a script
-# rather than an endpoint: nothing that bypasses the pacing gate should be reachable from
-# the app, in any build.
+# Needs SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN in .env. The app-side equivalent
+# is /debug-day, which exists only when the DEBUG_DAY_ENABLED secret is set; production
+# never sets it, so nothing that bypasses the pacing gate is reachable from the app there.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
