@@ -32,8 +32,16 @@ function fakeDbWithMedia(): Recorded {
       select: () => api,
       eq: () => api,
       // enrich() awaits the users query directly, so the chain has to be thenable.
+      // enrich() awaits the users query directly; the group reads en + fr so that
+      // translation targets exist.
       // deno-lint-ignore no-explicit-any
-      then: (resolve: any) => resolve({ data: [], error: null }),
+      then: (resolve: any) =>
+        resolve({
+          data: name === "users"
+            ? [{ preferred_language: "en" }, { preferred_language: "fr" }]
+            : [],
+          error: null,
+        }),
       maybeSingle: () => {
         if (name === "day_instances") {
           return Promise.resolve({
@@ -302,4 +310,75 @@ Deno.test("audio is still moderated by its transcript, not looked at", async () 
   );
   // imageFlagged must not affect the audio path.
   assertEquals((await res.json()).moderation_status, "approved");
+});
+
+Deno.test("translations carry the reflection, and the reply gets its own slot", async () => {
+  // The old prompt asked for "translations" without saying what to translate, with both
+  // the reflection and the model's own reply in scope. It sometimes translated the reply
+  // into the column meant for the body, which then displayed as the member's own words.
+  const db = fakeDbWithMedia();
+  // deno-lint-ignore no-explicit-any
+  const ai: any = {
+    moderate: () => Promise.resolve({ flagged: false }),
+    moderateImage: () => Promise.resolve({ flagged: false }),
+    generateText: () => Promise.resolve(""),
+    generateJson: () =>
+      Promise.resolve({
+        sentiment_tag: "frustrated",
+        response: "I hear you. That sounds genuinely hard.",
+        translations: { fr: "Ce plan m'a vraiment agace." },
+        response_translations: { fr: "Je t'entends. Cela semble vraiment difficile." },
+      }),
+  };
+
+  await invoke(() =>
+    handleSubmitReflection(
+      post({
+        day_instance_id: DAY,
+        media_type: "text",
+        content: "This plan really annoyed me.",
+        language: "en",
+      }),
+      db.client,
+      ai,
+      present,
+    )
+  );
+
+  assertEquals(db.lastUpdate?.translated_text, { fr: "Ce plan m'a vraiment agace." });
+  assertEquals(db.lastUpdate?.ai_response_translated, {
+    fr: "Je t'entends. Cela semble vraiment difficile.",
+  });
+  assertEquals(db.lastUpdate?.ai_response, "I hear you. That sounds genuinely hard.");
+});
+
+Deno.test("a language we did not ask for never reaches the column", async () => {
+  // A model that volunteers extra languages, or answers with a nested object, must not
+  // widen what is stored.
+  const db = fakeDbWithMedia();
+  // deno-lint-ignore no-explicit-any
+  const ai: any = {
+    moderate: () => Promise.resolve({ flagged: false }),
+    moderateImage: () => Promise.resolve({ flagged: false }),
+    generateText: () => Promise.resolve(""),
+    generateJson: () =>
+      Promise.resolve({
+        sentiment_tag: "hopeful",
+        response: "Lovely.",
+        translations: { fr: "Bonjour", de: "Guten Tag", es: { nested: "no" }, en: "  " },
+        response_translations: { fr: "Charmant." },
+      }),
+  };
+
+  await invoke(() =>
+    handleSubmitReflection(
+      post({ day_instance_id: DAY, media_type: "text", content: "Hello", language: "en" }),
+      db.client,
+      ai,
+      present,
+    )
+  );
+
+  // The stub group reads only 'fr' besides the author, so that is all that may be kept.
+  assertEquals(db.lastUpdate?.translated_text, { fr: "Bonjour" });
 });

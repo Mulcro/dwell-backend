@@ -281,23 +281,41 @@ async function enrich(
   ];
 
   try {
+    // The old prompt asked for "translations" without ever saying what to translate,
+    // while two candidate texts were in scope: the member's reflection and the response
+    // the model was about to write. It usually chose the reflection and sometimes chose
+    // its own reply -- which then displayed as the reflection's translation. Naming both
+    // explicitly, each with its own key, removes the ambiguity rather than hoping.
+    const codes = JSON.stringify(targets);
     const result = await ai.generateJson(
       [
         "You are supporting a small Bible-reading group.",
-        "Return JSON with keys: sentiment_tag (one lowercase word),",
-        `translations (an object keyed by these language codes: ${JSON.stringify(targets)}),`,
-        "and response (two encouraging sentences addressed to the author).",
-        `The reflection is in ${language}:`,
+        "A member's reflection appears at the end of this message.",
+        "",
+        "Return JSON with exactly these keys:",
+        '- "sentiment_tag": one lowercase word for the reflection\'s mood.',
+        `- "response": two encouraging sentences addressed to the author, in ${language}.`,
+        `- "translations": an object keyed by ${codes}. Each value translates`,
+        "  THE MEMBER'S REFLECTION -- their own words below, never your response.",
+        `- "response_translations": an object keyed by ${codes}. Each value translates`,
+        '  YOUR "response" above, so their group-mates can read it too.',
+        "",
+        "Translate for meaning rather than word for word. Keep the author's tone,",
+        "including frustration: do not soften, sanitise or answer the reflection inside",
+        '"translations".',
+        "",
+        `The reflection, written in ${language}:`,
         text,
       ].join("\n"),
     );
 
     return {
       sentiment_tag: typeof result.sentiment_tag === "string" ? result.sentiment_tag : null,
-      translated_text: buildTranslations(result, targets),
+      translated_text: pickTranslations(result.translations, targets),
       ai_response: typeof result.response === "string" && result.response.trim() !== ""
         ? result.response.trim()
         : null,
+      ai_response_translated: pickTranslations(result.response_translations, targets),
     };
   } catch (err) {
     // Enrichment is a nicety; losing it must never block a reflection from counting.
@@ -305,22 +323,28 @@ async function enrich(
       "submit-reflection enrichment failed, approving without it",
       err,
     );
-    return { sentiment_tag: null, translated_text: null, ai_response: null };
+    return {
+      sentiment_tag: null,
+      translated_text: null,
+      ai_response: null,
+      ai_response_translated: null,
+    };
   }
 }
 
-/** Only real translations, keyed by language code. The AI response has its own column. */
-function buildTranslations(
-  result: Record<string, unknown>,
+/** Only the requested languages, keyed by code. Used for both translation columns. */
+function pickTranslations(
+  translations: unknown,
   targets: string[],
 ): Record<string, unknown> | null {
-  const translations = result.translations;
   const payload: Record<string, unknown> = {};
 
   if (translations && typeof translations === "object") {
     for (const lang of targets) {
       const value = (translations as Record<string, unknown>)[lang];
-      if (typeof value === "string") payload[lang] = value;
+      // Only the languages we asked for, and only strings: a model that answers with a
+      // nested object or an unrequested language should not reach the column.
+      if (typeof value === "string" && value.trim() !== "") payload[lang] = value.trim();
     }
   }
   return Object.keys(payload).length > 0 ? payload : null;
