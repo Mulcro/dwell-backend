@@ -33,7 +33,7 @@ Base URL: `https://<project-ref>.supabase.co/functions/v1/<name>`. All require a
 | /create-group | POST | Required | { name, plan_challenge_id, frequency?, timezone?, catch_up_threshold_pct?, auto_skip_after_days? } → { group_id, invite_token } | Creates a group in forming state plus a group_members row for the creator. frequency is 'daily' (default), 'weekdays' or 'three_per_week'; timezone is the creator's IANA zone, which decides which local day it is for the weekday-based rhythms |
 | /join-group | POST | Required | { invite_token } → { group_id, challenge_status } | Adds the caller to the group. If this join brings membership to 2, flips the group to active and creates the Day 1 row |
 | /preview-group | POST (RPC) | None — public | { invite_token } → { name, plan_title } | Lets the in-browser invite-link flow show "You've been invited to [Group] doing [Plan]" before the visitor signs in or installs the app. Newly identified while writing this section — the MVP Spec's "works in-browser before forcing install" join flow implied this endpoint but it was never explicitly spec'd until now. Implemented as a security definer Postgres function (see Database) rather than an Edge Function, since it's a single read with no logic |
-| /submit-reflection | POST | Required | { day_instance_id, media_type, content?, transcript?, language } → { reflection_id, moderation_status } | Inserts the reflection as moderation_status='pending' (this insert does NOT gate the day) → OpenAI Moderation check → if flagged, stops early (stays hidden, never counts toward threshold); if approved, flips moderation_status to 'approved', and it is that UPDATE that fires check-day-threshold (see Database), plus one tiered-LLM call for sentiment tag + translation + personalized response written back onto the row |
+| /submit-reflection | POST | Required | { day_instance_id, media_type, content?, transcript?, language } → { reflection_id, moderation_status } | Inserts the reflection as moderation_status='pending' (this insert does NOT gate the day) → OpenAI Moderation check → if flagged, stops early (stays hidden, never counts toward threshold); if approved, flips moderation_status to 'approved', and it is that UPDATE that fires check-day-threshold (see Database), plus one tiered-LLM call for the sentiment tag, translations of the reflection (translated_text), a personalized response in the author's language (ai_response) and translations of that response (ai_response_translated), written back onto the row |
 | /group-challenge-action | POST | Required, must be a group member | { group_id, action: "continue" or "pause" or "end" } → { challenge_status } | Handles the Continue/Pause/End response to the inactivity prompt |
 
 **Not an Edge Function, by design:** updating your own timezone/push_token, and posting a comment, are both plain data writes with no side effects — they go through the Direct Database API below instead. Comments specifically were already decided to skip moderation in the MVP Spec ("trade-off... accepted as smaller than the retention cost of leaving it out"), so there's no logic there to justify a function.
@@ -213,6 +213,7 @@ create table reflections (
   transcript text,
   translated_text jsonb,          -- language-keyed translations ONLY
   ai_response text,               -- the personalized response from the generation step
+  ai_response_translated jsonb,   -- the response, keyed by the language translated INTO; null when every group-mate reads the author's language
   language text not null,
   sentiment_tag text,
   moderation_status text not null default 'pending',
@@ -346,7 +347,7 @@ returns boolean as $$
 $$ language sql security definer stable;
 ```
 
-open_ready_next_days: advancement. Opens the next day once the current one is threshold_met AND has been open at least 24 hours (the "one per 24h" pacing). Run by pg_cron (5.2); pure SQL, no HTTP, so it is a plpgsql function rather than an Edge Function. It also completes the finished day and, on the final day, transitions the group to completed and fires end-of-challenge-summary.
+open_ready_next_days: advancement. Opens the next day once the current one is threshold_met AND has been open at least 24 hours (the "one per 24h" pacing). Run by pg_cron (5.2); pure SQL, no HTTP, so it is a plpgsql function rather than an Edge Function. It also completes the finished day and, on the final day, transitions the group to completed and fires end-of-challenge-summary. Both arguments are optional and pg_cron passes neither: p_now is the clock the 24h gate and the reading rhythm are judged against (the tests pin it), and p_group_id restricts the sweep to one group, which is how scripts/advance-day.sh moves a single group forward without touching any other group that happens to be due.
 
 ```sql
 create or replace function public.open_ready_next_days()
