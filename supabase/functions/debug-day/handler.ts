@@ -11,8 +11,9 @@ type Action = typeof ACTIONS[number];
  *
  * Debug-only time travel for the app's debug UI. Advancing backdates the current day
  * past the 24h gate, forces its threshold met, and runs the real sweep for this one
- * group; rewinding deletes the newest day (reflections cascade away) and reopens the
- * one before it, or reopens the final day of a completed challenge.
+ * group; rewinding deletes the newest day and reopens the one before it, or reopens the
+ * final day of a completed challenge. A rewind that would delete anyone else's
+ * reflections is refused.
  *
  * The function answers 404 unless the DEBUG_DAY_ENABLED secret is "true", so a
  * production project that never sets it does not expose a pacing bypass.
@@ -33,22 +34,29 @@ export async function handleDebugDay(
     throw new HttpError(400, `action must be one of: ${ACTIONS.join(", ")}`);
   }
 
-  const { data: membership } = await db
+  const { data: membership, error: memberError } = await db
     .from("group_members")
     .select("user_id")
     .eq("group_id", groupId)
     .eq("user_id", userId)
     .maybeSingle();
+  if (memberError) {
+    console.error("debug-day could not check membership", memberError);
+    throw new HttpError(500, "Could not check membership");
+  }
   if (!membership) throw new HttpError(403, "Not a member of this group");
 
-  const { data, error } = await db.rpc(
-    action === "advance" ? "debug_advance_day" : "debug_rewind_day",
-    { p_group_id: groupId },
-  );
+  // Rewinding is told who asked, because it may only delete the caller's own content.
+  const { data, error } = action === "advance"
+    ? await db.rpc("debug_advance_day", { p_group_id: groupId })
+    : await db.rpc("debug_rewind_day", { p_group_id: groupId, p_user_id: userId });
   if (error) {
-    // The raise messages are our own ("day 3 is open; nothing to advance"), written to
-    // be shown to the tester.
-    throw new HttpError(409, error.message);
+    // Our own refusals are raised as P0001 with a message written for the tester
+    // ("day 3 is open; nothing to advance"). Anything else is a failure, not a verdict,
+    // and its text stays in the logs.
+    if (error.code === "P0001") throw new HttpError(409, error.message);
+    console.error("debug-day could not move the day", error);
+    throw new HttpError(500, "Could not move the day");
   }
 
   return json(data);

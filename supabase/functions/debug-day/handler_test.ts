@@ -14,7 +14,12 @@ function request(body: unknown): Request {
 }
 
 function fakeDb(
-  options: { member?: boolean; rpcData?: unknown; rpcError?: { message: string } } = {},
+  options: {
+    member?: boolean;
+    memberError?: { message: string };
+    rpcData?: unknown;
+    rpcError?: { code: string; message: string };
+  } = {},
 ) {
   const state = { rpcCalls: [] as Array<{ fn: string; args: unknown }> };
   // deno-lint-ignore no-explicit-any
@@ -23,8 +28,8 @@ function fakeDb(
     eq: () => api,
     maybeSingle: () =>
       Promise.resolve({
-        data: options.member === false ? null : { user_id: USER },
-        error: null,
+        data: options.member === false || options.memberError ? null : { user_id: USER },
+        error: options.memberError ?? null,
       }),
   };
   const client = {
@@ -87,12 +92,33 @@ Deno.test("rewind runs the rewind function", async () => {
   const db = fakeDb({ rpcData: { day_index: 2, challenge_status: "active" } });
   const res = await call(request({ group_id: GROUP, action: "rewind" }), db.client);
   assertEquals(res.status, 200);
-  assertEquals(db.state.rpcCalls, [{ fn: "debug_rewind_day", args: { p_group_id: GROUP } }]);
+  // The caller is named, since a rewind may only delete their own content.
+  assertEquals(db.state.rpcCalls, [{
+    fn: "debug_rewind_day",
+    args: { p_group_id: GROUP, p_user_id: USER },
+  }]);
 });
 
 Deno.test("a refusal from the database reaches the tester as a conflict", async () => {
-  const db = fakeDb({ rpcError: { message: "already on day 1; nothing to rewind" } });
+  const db = fakeDb({
+    rpcError: { code: "P0001", message: "already on day 1; nothing to rewind" },
+  });
   const res = await call(request({ group_id: GROUP, action: "rewind" }), db.client);
   assertEquals(res.status, 409);
   assertEquals((await res.json()).error, "already on day 1; nothing to rewind");
+});
+
+Deno.test("any other database failure is a 500 with nothing of the database in it", async () => {
+  const db = fakeDb({ rpcError: { code: "57014", message: "canceling statement due to timeout" } });
+  const res = await call(request({ group_id: GROUP, action: "advance" }), db.client);
+  assertEquals(res.status, 500);
+  assertEquals(await res.json(), { error: "Could not move the day" });
+});
+
+Deno.test("a failed membership lookup is a failure, not a denial", async () => {
+  const db = fakeDb({ memberError: { message: "connection reset" } });
+  const res = await call(request({ group_id: GROUP, action: "advance" }), db.client);
+  assertEquals(res.status, 500);
+  assertEquals(await res.json(), { error: "Could not check membership" });
+  assertEquals(db.state.rpcCalls.length, 0);
 });
