@@ -40,6 +40,19 @@ interface Fixture {
 }
 
 /** Builds an isolated group so each step starts from a known state. */
+/** The send-push dispatches aimed at one member, optionally only those carrying these words. */
+function pushesTo(
+  dispatch: ReturnType<typeof fakeDispatch>,
+  userId: string,
+  words?: string,
+) {
+  return dispatch.calls.filter((call) => {
+    const body = call.body as { user_id: string; body: string };
+    return call.name === "send-push" && body.user_id === userId &&
+      (words === undefined || body.body === words);
+  });
+}
+
 async function makeGroup(
   db: SupabaseClient,
   members: TestUser[],
@@ -138,7 +151,7 @@ Deno.test("system-triggered functions", async (t) => {
           invoke(() => handleGenerateGroupPulse(unauthorized, db, fakeAi(), key())),
           invoke(() => handleEndOfChallengeSummary(unauthorized, db, fakeAi(), key())),
           invoke(() => handleDailyCronAutoskip(unauthorized, db, fakeDispatch(), key())),
-          invoke(() => handleDailyCronNudge(unauthorized, db, key())),
+          invoke(() => handleDailyCronNudge(unauthorized, db, fakeDispatch(), key())),
           invoke(() =>
             handleDailyCronInactivityCheck(
               unauthorized,
@@ -460,20 +473,31 @@ Deno.test("system-triggered functions", async (t) => {
         );
         const f = track(await makeGroup(db, [alice], { openedAgo: 23 * HOUR }));
 
-        await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+        const dispatch = fakeDispatch();
+        await invoke(() => handleDailyCronNudge(serviceRequest(), db, dispatch, key()));
 
         const { data: nudges } = await db
           .from("ai_insights")
-          .select("id").eq("day_instance_id", f.dayId).eq("type", "nudge");
+          .select("id, content").eq("day_instance_id", f.dayId).eq("type", "nudge");
         assertEquals(nudges!.length, 1);
 
-        // Runs every 15 minutes: it must not nudge the same person again.
-        await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+        // The same words go to the phone, addressed to her and titled with the group.
+        // Earlier fixtures leave other open days behind, so pushes are scoped the way the
+        // row assertions are: to this member and these words.
+        assertEquals(pushesTo(dispatch, alice.id, nudges![0].content), [{
+          name: "send-push",
+          body: { user_id: alice.id, title: "Sys Test", body: nudges![0].content },
+        }]);
+
+        // Runs every 15 minutes: it must not nudge the same person again, on either channel.
+        const again = fakeDispatch();
+        await invoke(() => handleDailyCronNudge(serviceRequest(), db, again, key()));
         const { count } = await db
           .from("ai_insights")
           .select("id", { count: "exact", head: true })
           .eq("day_instance_id", f.dayId).eq("type", "nudge");
         assertEquals(count, 1);
+        assertEquals(pushesTo(again, alice.id, nudges![0].content).length, 0);
       },
     );
 
@@ -484,13 +508,15 @@ Deno.test("system-triggered functions", async (t) => {
       );
       const f = track(await makeGroup(db, [bob], { openedAgo: 23 * HOUR }));
 
-      await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+      const dispatch = fakeDispatch();
+      await invoke(() => handleDailyCronNudge(serviceRequest(), db, dispatch, key()));
 
       const { count } = await db
         .from("ai_insights")
         .select("id", { count: "exact", head: true })
         .eq("day_instance_id", f.dayId).eq("type", "nudge");
       assertEquals(count, 0);
+      assertEquals(pushesTo(dispatch, bob.id).length, 0);
     });
 
     await t.step("someone who already posted is not nudged", async () => {
@@ -501,13 +527,22 @@ Deno.test("system-triggered functions", async (t) => {
       const f = track(await makeGroup(db, [alice], { openedAgo: 23 * HOUR }));
       await addReflection(db, f.dayId, alice, "approved");
 
-      await invoke(() => handleDailyCronNudge(serviceRequest(), db, key()));
+      const dispatch = fakeDispatch();
+      await invoke(() => handleDailyCronNudge(serviceRequest(), db, dispatch, key()));
 
       const { count } = await db
         .from("ai_insights")
         .select("id", { count: "exact", head: true })
         .eq("day_instance_id", f.dayId).eq("type", "nudge");
       assertEquals(count, 0);
+      assertEquals(
+        pushesTo(
+          dispatch,
+          alice.id,
+          "Today's passage is still waiting for you. Even one sentence counts.",
+        ).length,
+        0,
+      );
     });
 
     await t.step(

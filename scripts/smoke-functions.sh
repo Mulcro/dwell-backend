@@ -21,8 +21,9 @@ SUPABASE_BIN="${SUPABASE_BIN:-supabase}"
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"; kill %1 2>/dev/null || true' EXIT
 
-# submit-reflection reads this at boot; the smoke test never reaches a real AI call.
-printf 'OPENAI_API_KEY=sk-smoke-placeholder\n' > "$workdir/fn.env"
+# submit-reflection and send-push read these at boot; the smoke test never reaches a
+# real AI call or Apple.
+printf 'OPENAI_API_KEY=sk-smoke-placeholder\nAPNS_AUTH_KEY_P8=placeholder\nAPNS_KEY_ID=x\nAPNS_TEAM_ID=x\nAPNS_BUNDLE_ID=x\nAPNS_HOST=x\n' > "$workdir/fn.env"
 
 echo "booting functions..."
 "$SUPABASE_BIN" functions serve --env-file "$workdir/fn.env" > "$workdir/serve.log" 2>&1 &
@@ -73,6 +74,16 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/debug-d
   -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
   -d "{\"group_id\":\"$group\",\"action\":\"advance\"}")
 [ "$code" = "404" ] || fail "debug-day answered while disabled (HTTP $code)"
+
+echo "send-push is not reachable with a user token..."
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/send-push" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}')
+[ "$code" = "401" ] || fail "send-push accepted a user token (HTTP $code)"
+
+echo "send-push boots and validates for the service role..."
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/send-push" \
+  -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" -H 'Content-Type: application/json' -d '{}')
+[ "$code" = "400" ] || fail "send-push did not reject an empty message (HTTP $code)"
 
 echo "delete-account refuses without the confirmation..."
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/delete-account" \

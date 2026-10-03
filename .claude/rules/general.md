@@ -18,4 +18,4 @@ Dwell's backend is Supabase: Postgres, Auth, Realtime, and Edge Functions (TypeS
 - Keep changes minimal: no new code beyond what the task requires.
 - Commit messages are a single line stating the main purpose of the change. No body, no bullet list, and no trailers. Never add yourself as a co-author or contributor.
 - Never push to `main`. Work on a branch and open a PR for review, even for a one-line change. The PR body may carry the detail that commit messages deliberately leave out.
-- Push delivery is stubbed for the MVP. Nudges are written as `ai_insights` rows (type `nudge`, `target_user_id` set), not sent to APNs.
+- Push goes out over APNs from `send-push`, which only other functions call. A nudge is still written as an `ai_insights` row first (type `nudge`, `target_user_id` set); the push carries the same words and is best effort.
