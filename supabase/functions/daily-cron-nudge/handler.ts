@@ -40,6 +40,7 @@ export async function handleDailyCronNudge(
   }
 
   let written = 0;
+  const pushes: Array<{ user_id: string; title: string; body: string }> = [];
 
   for (const day of days ?? []) {
     const dayOpenedAt = new Date(day.opened_at).getTime();
@@ -104,13 +105,18 @@ export async function handleDailyCronNudge(
 
       // The same words, on the phone. Titled with the group so a member of two groups
       // knows which one is waiting.
-      await dispatch("send-push", {
+      pushes.push({
         user_id: member.user_id,
         title: (day.groups as unknown as { name: string }).name,
         body: content,
       });
     }
   }
+
+  // Every row is written before any push goes out, and the pushes run together through
+  // a bounded dispatch, so a slow round-trip to Apple can delay a notification but never
+  // another member's in-app nudge.
+  await Promise.allSettled(pushes.map((push) => dispatch("send-push", push)));
 
   return json({ nudges_written: written });
 }

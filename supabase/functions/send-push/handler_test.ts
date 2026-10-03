@@ -14,8 +14,11 @@ function request(body: unknown, key = KEY): Request {
   });
 }
 
-function fakeDb(pushToken: string | null) {
-  const state = { updated: null as Record<string, unknown> | null };
+function fakeDb(pushToken: string | null, options: { clearError?: Error } = {}) {
+  const state = {
+    updated: null as Record<string, unknown> | null,
+    filters: {} as Record<string, unknown>,
+  };
   // deno-lint-ignore no-explicit-any
   const api: any = {
     select: () => api,
@@ -23,7 +26,16 @@ function fakeDb(pushToken: string | null) {
     maybeSingle: () => Promise.resolve({ data: { push_token: pushToken }, error: null }),
     update: (row: Record<string, unknown>) => {
       state.updated = row;
-      return { eq: () => Promise.resolve({ error: null }) };
+      // A thenable filter chain, as supabase-js builders are, so every .eq() is seen.
+      // deno-lint-ignore no-explicit-any
+      const chain: any = {
+        eq: (column: string, value: unknown) => {
+          state.filters[column] = value;
+          return chain;
+        },
+        then: (resolve: (v: unknown) => void) => resolve({ error: options.clearError ?? null }),
+      };
+      return chain;
     },
   };
   // deno-lint-ignore no-explicit-any
@@ -101,6 +113,20 @@ Deno.test("a device Apple no longer knows has its token cleared", async () => {
 
   assertEquals(await res.json(), { delivered: false, reason: "unregistered" });
   assertEquals(db.state.updated, { push_token: null });
+  // Only the token Apple rejected: a device that re-registered meanwhile keeps its new one.
+  assertEquals(db.state.filters, { id: USER, push_token: "stale" });
+});
+
+Deno.test("a failed cleanup is still reported as a dead device, not as delivered", async () => {
+  const db = fakeDb("stale", { clearError: new Error("db down") });
+  const res = await call(
+    request({ user_id: USER, title: "t", body: "b" }),
+    db.client,
+    fakeApns("unregistered").apns,
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals(await res.json(), { delivered: false, reason: "unregistered" });
 });
 
 Deno.test("a transient refusal keeps the token for next time", async () => {

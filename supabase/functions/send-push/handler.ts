@@ -36,8 +36,14 @@ export async function handleSendPush(
 
   const outcome = await apns.send(user.push_token, message);
   if (outcome === "unregistered") {
-    // Apple says the device is gone; stop addressing it on every tick.
-    await db.from("users").update({ push_token: null }).eq("id", userId);
+    // Apple says the device is gone. Clear the token only if it is still the one we
+    // sent to: a phone that re-registered while this push was in flight keeps its new one.
+    const { error: clearError } = await db
+      .from("users")
+      .update({ push_token: null })
+      .eq("id", userId)
+      .eq("push_token", user.push_token);
+    if (clearError) console.error("send-push could not clear a dead token", clearError);
   }
   return json(outcome === "sent" ? { delivered: true } : { delivered: false, reason: outcome });
 }
