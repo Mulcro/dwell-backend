@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { requireEnv, serviceRoleKeys, supabaseConfig } from "../_shared/env.ts";
+import { serviceRoleKeys, supabaseConfig } from "../_shared/env.ts";
 import { toErrorResponse } from "../_shared/http.ts";
 import { createAi } from "../_shared/openai.ts";
 import { handleWeeklyCronLeaderboard } from "./handler.ts";
@@ -10,7 +10,10 @@ Deno.serve(async (req) => {
     const db = createClient(url, serviceRoleKey, {
       auth: { persistSession: false },
     });
-    const ai = createAi(requireEnv("OPENAI_API_KEY"));
+    // The leaderboard never needed AI; the recap does, and it is optional. A project
+    // without the key still gets its scores.
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
+    const ai = apiKey ? createAi(apiKey) : null;
     return await handleWeeklyCronLeaderboard(req, db, ai, serviceRoleKeys());
   } catch (err) {
     return toErrorResponse(err);

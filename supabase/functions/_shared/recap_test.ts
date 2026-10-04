@@ -60,7 +60,27 @@ Deno.test("members are numbered per person in first-posted order, with every day
     true,
   );
   assertEquals(prompt.includes("Member 2 (posted on 1 of 7 days):"), true);
-  assertEquals(prompt.includes("showed up on 6 of 7 days and has 3 members"), true);
+  assertEquals(prompt.includes("showed up on 6 of 7 days and it has 3 members"), true);
+});
+
+Deno.test("thin material changes the tone of the prose, not whether the card exists", async () => {
+  const model = ai(() =>
+    Promise.resolve({
+      headline: "rest",
+      summary: "A gentle close.",
+      members: [{ member: 1, line: "Kept coming back to rest" }],
+    })
+  );
+  const recap = await writeRecap(model, {
+    ...input,
+    thin: true,
+    daysShowedUp: null,
+    daysTotal: null,
+  });
+  assertEquals(recap.headline, "rest");
+  assertEquals(recap.members.length, 1);
+  assertEquals(model.prompts[0].includes("two warm, non-judgmental sentences"), true);
+  assertEquals(model.prompts[0].includes("No day counts are known"), true);
 });
 
 Deno.test("when the card cannot be produced the recap degrades to prose", async () => {

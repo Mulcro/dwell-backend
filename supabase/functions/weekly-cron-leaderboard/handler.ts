@@ -2,12 +2,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
 import { json } from "../_shared/http.ts";
 import { otherLanguages, translateCard } from "../_shared/insight_card.ts";
-import { type Ai, CLASSIFY_MODEL } from "../_shared/openai.ts";
-import { type Recap, writeRecap } from "../_shared/recap.ts";
+import type { Ai } from "../_shared/openai.ts";
+import { writeRecap } from "../_shared/recap.ts";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-/** Below this many approved reflections the week gets a closing note, not a card. */
-const ENOUGH_FOR_A_RECAP = 3;
+/** Fewer approved reflections than this and the recap closes the week gently. */
+const THIN_WEEK = 3;
+/** Recaps are AI round-trips; a few at a time keeps a long group list inside the clock. */
+const RECAPS_AT_ONCE = 3;
+
+interface Day {
+  id: string;
+  day_index: number;
+  status: string;
+  opened_at: string;
+}
 
 /**
  * pg_cron, Monday 00:00 UTC. Service role only.
@@ -16,14 +25,15 @@ const ENOUGH_FOR_A_RECAP = 3;
  * that just ended. It reads only that member's rows and never day_instances.status, so a
  * group-level skip, pause or expiry can never reduce an individual's score.
  *
- * The same pass writes each group's weekly recap: the card the design shows under
- * "Sunday Crew showed up 6 of the 7 days". One per group per week; a re-run finds it
- * and moves on, and a group with nothing posted that week gets none.
+ * The leaderboard is written first and on its own. Only then does the same pass write
+ * each group's weekly recap -- the card the design shows under "Sunday Crew showed up 6
+ * of the 7 days" -- which is optional: no AI configured means no recaps and a normal
+ * leaderboard, and a recap failing or timing out costs nothing but that recap.
  */
 export async function handleWeeklyCronLeaderboard(
   req: Request,
   db: SupabaseClient,
-  ai: Ai,
+  ai: Ai | null,
   serviceRoleKey: string | string[],
 ): Promise<Response> {
   requireServiceRole(req, serviceRoleKey);
@@ -43,16 +53,15 @@ export async function handleWeeklyCronLeaderboard(
   }
 
   const rows: Array<Record<string, unknown>> = [];
-  let recaps = 0;
+  const groupDays = new Map<string, Day[]>();
 
   for (const group of groups ?? []) {
     const { data: days } = await db
       .from("day_instances")
       .select("id, day_index, status, opened_at")
       .eq("group_id", group.id);
-    const dayList = (days ?? []) as Array<
-      { id: string; day_index: number; status: string; opened_at: string }
-    >;
+    const dayList = (days ?? []) as Day[];
+    groupDays.set(group.id, dayList);
     const dayIds = dayList.map((d) => d.id);
 
     const { data: members } = await db
@@ -81,13 +90,6 @@ export async function handleWeeklyCronLeaderboard(
         participation_score: score,
       });
     }
-
-    try {
-      if (await writeWeeklyRecap(db, ai, group.id, dayList, weekStart, weekStartDate)) recaps++;
-    } catch (err) {
-      // The recap is a courtesy; the leaderboard must land regardless.
-      console.error("weekly recap failed for a group", err);
-    }
   }
 
   if (rows.length > 0) {
@@ -102,24 +104,46 @@ export async function handleWeeklyCronLeaderboard(
     }
   }
 
+  // The scores are safe. Everything from here is the optional part.
+  let recaps = 0;
+  if (!ai) {
+    console.warn("weekly recaps skipped: OPENAI_API_KEY is not set");
+  } else {
+    const ids = [...groupDays.keys()];
+    for (let i = 0; i < ids.length; i += RECAPS_AT_ONCE) {
+      const batch = ids.slice(i, i + RECAPS_AT_ONCE).map((id) =>
+        writeWeeklyRecap(db, ai, id, groupDays.get(id) ?? [], weekStart, weekStartDate)
+      );
+      for (const outcome of await Promise.allSettled(batch)) {
+        if (outcome.status === "fulfilled" && outcome.value) recaps++;
+        // The recap is a courtesy; a failure is logged and the next group still runs.
+        if (outcome.status === "rejected") console.error("weekly recap failed", outcome.reason);
+      }
+    }
+  }
+
   return json({ week_start: weekStart, entries: rows.length, recaps });
 }
 
 /**
- * One recap for the week just ended, from the days that opened in it. Returns whether
- * a row was written.
+ * One recap for the week just ended. Returns whether a row was written.
+ *
+ * "This week" means the same thing the leaderboard means: reflections POSTED in the
+ * window, whichever day they were for -- so a late post on last week's day counts in
+ * both places or neither. The days counts are the days that OPENED in the window.
  */
 async function writeWeeklyRecap(
   db: SupabaseClient,
   ai: Ai,
   groupId: string,
-  dayList: Array<{ id: string; day_index: number; status: string; opened_at: string }>,
+  dayList: Day[],
   weekStart: string,
   weekStartDate: Date,
 ): Promise<boolean> {
-  const week = dayList.filter((d) => new Date(d.opened_at).getTime() >= weekStartDate.getTime());
-  if (week.length === 0) return false;
+  if (dayList.length === 0) return false;
 
+  // Cheap pre-check so a re-run does not pay for AI it will throw away. The unique index
+  // behind the insert is what actually enforces one card per week.
   const { count: already } = await db
     .from("ai_insights")
     .select("id", { count: "exact", head: true })
@@ -128,12 +152,13 @@ async function writeWeeklyRecap(
     .eq("payload->>week_start", weekStart);
   if ((already ?? 0) > 0) return false;
 
-  const dayIndex = new Map(week.map((d) => [d.id, d.day_index]));
+  const dayIndex = new Map(dayList.map((d) => [d.id, d.day_index]));
   const { data: reflections } = await db
     .from("reflections")
     .select("user_id, day_instance_id, content, transcript")
-    .in("day_instance_id", week.map((d) => d.id))
-    .eq("moderation_status", "approved");
+    .in("day_instance_id", dayList.map((d) => d.id))
+    .eq("moderation_status", "approved")
+    .gte("created_at", weekStartDate.toISOString());
 
   const authored = (reflections ?? [])
     .map((
@@ -164,31 +189,21 @@ async function writeWeeklyRecap(
     .select("user_id", { count: "exact", head: true })
     .eq("group_id", groupId);
 
-  const daysTotal = week.length;
-  const daysShowedUp = week
-    .filter((d) => d.status === "complete" || d.status === "threshold_met").length;
+  const week = dayList.filter((d) => new Date(d.opened_at).getTime() >= weekStartDate.getTime());
+  const daysTotal = week.length > 0 ? week.length : null;
+  const daysShowedUp = week.length > 0
+    ? week.filter((d) => d.status === "complete" || d.status === "threshold_met").length
+    : null;
 
-  const recap: Recap = authored.length >= ENOUGH_FOR_A_RECAP
-    ? await writeRecap(ai, {
-      title,
-      span: "this week",
-      reflections: authored,
-      memberCount: memberCount ?? null,
-      daysShowedUp,
-      daysTotal,
-    })
-    : {
-      headline: null,
-      members: [],
-      summary: await ai.generateText(
-        [
-          `A small group reading "${title}" shared ${authored.length} reflection(s) this week.`,
-          "Write two warm sentences closing out the week. Do not imply they fell short,",
-          "and do not invent detail about what they wrote.",
-        ].join("\n"),
-        CLASSIFY_MODEL,
-      ),
-    };
+  const recap = await writeRecap(ai, {
+    title,
+    span: "this week",
+    reflections: authored,
+    memberCount: memberCount ?? null,
+    daysShowedUp,
+    daysTotal,
+    thin: authored.length < THIN_WEEK,
+  });
 
   const card = { headline: recap.headline, summary: recap.summary, members: recap.members };
   const targets = await otherLanguages(db, groupId);
@@ -211,6 +226,8 @@ async function writeWeeklyRecap(
     translated_text: translated,
   });
   if (error) {
+    // Another run got there first; the unique index makes that a non-event.
+    if (error.code === "23505") return false;
     console.error("weekly recap insert failed", error);
     return false;
   }

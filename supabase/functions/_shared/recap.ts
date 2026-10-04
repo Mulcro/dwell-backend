@@ -5,7 +5,8 @@
  * Same bones as the pulse (a headline, prose, a line per member), but read across days
  * rather than one, so a member's line is what they brought, not what they intend to do.
  * Counts are computed by the caller and handed in; the model is told them and told not
- * to invent others.
+ * to invent others. Any material at all gets the card: thin material changes the tone
+ * of the prose, never whether the headline and member lines exist.
  */
 import { clip, type Member, readMembers } from "./insight_card.ts";
 import { type Ai, GENERATE_MODEL } from "./openai.ts";
@@ -17,8 +18,11 @@ export interface RecapInput {
   span: string;
   reflections: Array<{ user_id: string; day_index: number; text: string }>;
   memberCount: number | null;
-  daysShowedUp: number;
-  daysTotal: number;
+  /** Days the group cleared against days that counted; null when there were none. */
+  daysShowedUp: number | null;
+  daysTotal: number | null;
+  /** Little material: close the span warmly in two sentences rather than four on growth. */
+  thin?: boolean;
 }
 
 export interface Recap {
@@ -40,12 +44,25 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     person.days.push({ day_index: r.day_index, text: r.text });
   }
 
+  const showedUp = input.daysTotal
+    ? `The group showed up on ${input.daysShowedUp ?? 0} of ${input.daysTotal} days`
+    : "No day counts are known";
+  const summaryAsk = input.thin
+    ? [
+      `"summary": two warm, non-judgmental sentences closing out ${input.span}. Do not`,
+      "  imply they fell short, and do not invent detail beyond what they wrote.",
+    ]
+    : [
+      '"summary": four sentences on how this group grew: what they wrestled with, what',
+      '  changed, and what they can carry forward. Address them as "you". Do not quote',
+      "  anyone or name individuals.",
+    ];
+
   const prompt = [
     `A small group read "${input.title}" together. These are their reflections from`,
     `${input.span}, grouped by member.`,
     "",
-    `The group showed up on ${input.daysShowedUp} of ${input.daysTotal} days` +
-    (input.memberCount ? ` and has ${input.memberCount} members.` : "."),
+    showedUp + (input.memberCount ? ` and it has ${input.memberCount} members.` : "."),
     "Any number you state must come from those. Do not invent a count.",
     "",
     "Return JSON with exactly these keys:",
@@ -55,9 +72,7 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     "  specific to THIS group -- a noticing, not a summary. Start with the thing itself,",
     '  e.g. "listening, both to each other and to what you had been avoiding".',
     "",
-    '"summary": four sentences on how this group grew: what they wrestled with, what',
-    '  changed, and what they can carry forward. Address them as "you". Do not quote',
-    "  anyone or name individuals.",
+    ...summaryAsk,
     "",
     '"members": EXACTLY one entry for each numbered member below, in order:',
     '  { "member": <their number>, "line": <string> }',
@@ -67,7 +82,8 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     "",
     ...people.map((p, i) =>
       [
-        `Member ${i + 1} (posted on ${p.days.length} of ${input.daysTotal} days):`,
+        `Member ${i + 1}` +
+        (input.daysTotal ? ` (posted on ${p.days.length} of ${input.daysTotal} days):` : ":"),
         ...p.days.map((d) => `  Day ${d.day_index}: ${d.text}`),
       ].join("\n")
     ),
@@ -87,8 +103,12 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     const summary = await ai.generateText(
       [
         `A small group read "${input.title}" together. Here is what they shared ${input.span}.`,
-        "Write four sentences on how this group grew: what they wrestled with,",
-        "what changed, and what they can carry forward. Address them as 'you'.",
+        ...(input.thin
+          ? ["Write two warm, non-judgmental sentences closing it out. Do not imply they"]
+          : ["Write four sentences on how this group grew: what they wrestled with, what"]),
+        ...(input.thin
+          ? ["fell short, and do not invent detail beyond what they wrote."]
+          : ["changed, and what they can carry forward. Address them as 'you'."]),
         "Do not name individuals or quote anyone directly.",
         "",
         ...input.reflections.map((r, i) => `Reflection ${i + 1}: ${r.text}`),

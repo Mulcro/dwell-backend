@@ -20,6 +20,7 @@ function fakeDb(
     reflections?: Array<{ user_id: string; day_instance_id: string; content: string }>;
     languages?: string[];
     alreadyWritten?: boolean;
+    insertError?: { code: string; message: string };
   } = {},
 ) {
   const state = { inserted: null as Record<string, unknown> | null };
@@ -64,6 +65,7 @@ function fakeDb(
         return resolve({ data: [], count: 0 });
       },
       insert: (row: Record<string, unknown>) => {
+        if (opts.insertError) return Promise.resolve({ error: opts.insertError });
         state.inserted = row;
         return Promise.resolve({ error: null });
       },
@@ -74,14 +76,20 @@ function fakeDb(
   return { state, client: { from: table } };
 }
 
-function recapAi(): Ai & { jsonCalls: number } {
+function recapAi(): Ai & { jsonCalls: number; prompts: string[]; textModels: string[] } {
   const ai = {
     jsonCalls: 0,
+    prompts: [] as string[],
+    textModels: [] as string[],
     moderate: () => Promise.resolve({ flagged: false }),
     moderateImage: () => Promise.resolve({ flagged: false }),
-    generateText: () => Promise.resolve("two warm sentences"),
+    generateText: (_prompt: string, model?: string) => {
+      ai.textModels.push(model ?? "default");
+      return Promise.resolve("two warm sentences");
+    },
     generateJson: (prompt: string) => {
       ai.jsonCalls++;
+      ai.prompts.push(prompt);
       if (prompt.startsWith("Translate")) {
         return Promise.resolve({
           fr: {
@@ -143,7 +151,7 @@ Deno.test("a French reader gets the card translated, member ids intact", async (
   assertEquals(translated.fr.members, [{ user_id: ALICE, line: "Le repos" }]);
 });
 
-Deno.test("too little material gets the closing note, with the counts still on it", async () => {
+Deno.test("a thin challenge is typed as the lighter close but still gets its card", async () => {
   const db = fakeDb({
     reflections: [{ user_id: ALICE, day_instance_id: "d1", content: "Just me." }],
   });
@@ -152,16 +160,32 @@ Deno.test("too little material gets the closing note, with the counts still on i
 
   assertEquals(await res.json(), { status: "fallback_recap" });
   const row = db.state.inserted!;
+  assertEquals(row.type, "fallback_recap");
+  const payload = row.payload as Record<string, unknown>;
+  // The headline and the member line are there; only the prose is asked to be gentler.
+  assertEquals(payload.headline, "rest, and asking for it");
+  assertEquals(payload.members, [{ user_id: ALICE, line: "Kept coming back to rest" }]);
+  assertEquals(payload.reflection_count, 1);
+  assertEquals(ai.prompts[0].includes("two warm, non-judgmental sentences"), true);
+});
+
+Deno.test("with nothing posted at all the close is prose from the generation model", async () => {
+  const db = fakeDb({ reflections: [] });
+  const ai = recapAi();
+  const res = await run(db.client, ai);
+
+  assertEquals(await res.json(), { status: "fallback_recap" });
+  const row = db.state.inserted!;
   assertEquals(row.content, "two warm sentences");
-  assertEquals(row.payload, {
-    headline: null,
-    members: [],
-    days_showed_up: 3,
-    days_total: 7,
-    reflection_count: 1,
-  });
-  // No card was asked for; the note is prose only.
+  assertEquals((row.payload as Record<string, unknown>).members, []);
   assertEquals(ai.jsonCalls, 0);
+  assertEquals(ai.textModels, ["gpt-4o"]);
+});
+
+Deno.test("two ends racing past the check cannot both close the challenge", async () => {
+  const db = fakeDb({ insertError: { code: "23505", message: "duplicate key" } });
+  const res = await run(db.client, recapAi());
+  assertEquals(await res.json(), { status: "already_generated" });
 });
 
 Deno.test("a challenge is summarised once", async () => {

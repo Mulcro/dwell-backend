@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
 import { otherLanguages, translateCard } from "../_shared/insight_card.ts";
-import { type Ai, CLASSIFY_MODEL } from "../_shared/openai.ts";
+import { type Ai, GENERATE_MODEL } from "../_shared/openai.ts";
 import { type Recap, writeRecap } from "../_shared/recap.ts";
 
 /** Below this many approved reflections there is not enough to write a growth summary. */
@@ -91,8 +91,10 @@ export async function handleEndOfChallengeSummary(
     .select("user_id", { count: "exact", head: true })
     .eq("group_id", groupId);
 
+  // The type tells the client how much there was; the card is written either way, so a
+  // thin challenge still gets its headline and member lines, only with a gentler close.
   const isFull = authored.length >= ENOUGH_FOR_A_SUMMARY;
-  const recap: Recap = isFull
+  const recap: Recap = authored.length > 0
     ? await writeRecap(ai, {
       title: planTitle,
       span: "the whole plan",
@@ -100,18 +102,18 @@ export async function handleEndOfChallengeSummary(
       memberCount: memberCount ?? null,
       daysShowedUp,
       daysTotal,
+      thin: !isFull,
     })
     : {
       headline: null,
       members: [],
       summary: await ai.generateText(
         [
-          `A small group started "${planTitle}" but did not finish, sharing`,
-          `${authored.length} reflection(s) in total.`,
+          `A small group started "${planTitle}" but nobody posted a reflection.`,
           "Write two warm, non-judgmental sentences closing out the challenge.",
-          "Do not imply they failed, and do not invent detail about what they wrote.",
+          "Do not imply they failed, and do not invent detail about them.",
         ].join("\n"),
-        CLASSIFY_MODEL,
+        GENERATE_MODEL,
       ),
     };
 
@@ -137,6 +139,9 @@ export async function handleEndOfChallengeSummary(
   });
 
   if (error) {
+    // The one-closing-summary rule is a unique index, so two ends racing past the check
+    // above cannot both land. The loser reports what happened rather than failing.
+    if (error.code === "23505") return json({ status: "already_generated" });
     console.error("end-of-challenge-summary insert failed", error);
     throw new HttpError(500, "Could not save the summary");
   }

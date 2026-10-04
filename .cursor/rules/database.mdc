@@ -17,3 +17,4 @@ alwaysApply: false
 - Member-count math uses `group_members.joined_at <= day_instances.opened_at`, so late joiners never change a past day.
 - Extensions `pg_cron` and `pg_net` are created in the first migration, so local, CI and production match. Do not rely on a dashboard toggle.
 - Functions are executable by `anon` and `authenticated` by default (Supabase's default privileges), which is privilege escalation on a `SECURITY DEFINER` function. Every new privileged function must `revoke all ... from public, anon, authenticated` — naming the roles, since revoking from `public` alone does not remove explicit grants.
+- **A once-only row is a unique (partial) index**, never a check in the function that writes it. Add the index in the migration that introduces the rule, dedupe first so it can be created on existing data, and ship a pgTAP test that proves the second insert fails with `23505`.
