@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
+import {
+  ONGOING_GROUP_MESSAGE,
+  ONGOING_GROUP_SQLSTATE,
+  requireNoOngoingGroup,
+} from "../_shared/membership.ts";
 
 const FREQUENCIES = [
   "daily",
@@ -97,6 +102,10 @@ export async function handleCreateGroup(
     throw new HttpError(422, "That plan is not ready to use yet");
   }
 
+  // Last, after every input check: one challenge at a time (KAN-46). A finished group
+  // does not hold anyone back, so "same crew, new plan" is simply a new group.
+  await requireNoOngoingGroup(db, userId);
+
   const { data: group, error: groupError } = await db
     .from("groups")
     .insert({
@@ -124,11 +133,13 @@ export async function handleCreateGroup(
   if (memberError) {
     // A group whose creator is not a member is unreachable by everyone, including them.
     // Undo rather than leave it stranded.
-    console.error(
-      "create-group member insert failed, rolling back",
-      memberError,
-    );
     await db.from("groups").delete().eq("id", group.id);
+    // A second create racing this one got its membership in first; the database refused
+    // ours, which is the same answer the check above gives.
+    if (memberError.code === ONGOING_GROUP_SQLSTATE) {
+      throw new HttpError(409, ONGOING_GROUP_MESSAGE);
+    }
+    console.error("create-group member insert failed, rolled back", memberError);
     throw new HttpError(500, "Could not create group");
   }
 

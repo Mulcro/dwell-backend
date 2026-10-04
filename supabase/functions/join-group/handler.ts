@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
+import {
+  ONGOING_GROUP_MESSAGE,
+  ONGOING_GROUP_SQLSTATE,
+  requireNoOngoingGroup,
+} from "../_shared/membership.ts";
 
 /**
  * POST /join-group
@@ -36,6 +41,10 @@ export async function handleJoinGroup(
     throw new HttpError(409, "This challenge has already ended");
   }
 
+  // One challenge at a time (KAN-46). The group being joined is excluded, so tapping
+  // the invite to a group you are already in stays a no-op.
+  await requireNoOngoingGroup(db, userId, group.id);
+
   // on_conflict makes a second tap a no-op instead of a duplicate-key error.
   const { error: memberError } = await db
     .from("group_members")
@@ -48,6 +57,10 @@ export async function handleJoinGroup(
     // the authoritative answer rather than a count read a moment earlier.
     if (memberError.code === "23514") {
       throw new HttpError(409, "This group is full");
+    }
+    // Another join or create for this person landed first; the database is the authority.
+    if (memberError.code === ONGOING_GROUP_SQLSTATE) {
+      throw new HttpError(409, ONGOING_GROUP_MESSAGE);
     }
     console.error("join-group member insert failed", memberError);
     throw new HttpError(500, "Could not join group");

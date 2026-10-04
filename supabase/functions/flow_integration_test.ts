@@ -6,6 +6,7 @@
  */
 import { assertEquals } from "@std/assert";
 import { handleCreateGroup } from "./create-group/handler.ts";
+import { ONGOING_GROUP_MESSAGE } from "./_shared/membership.ts";
 import { handleJoinGroup } from "./join-group/handler.ts";
 import { handleSubmitReflection } from "./submit-reflection/handler.ts";
 import {
@@ -28,6 +29,14 @@ Deno.test("client-facing functions", async (t) => {
   const bob = await createTestUser(db, "bob");
   const carol = await createTestUser(db, "carol");
   users.push(alice, bob, carol);
+
+  // Someone who belongs to no group yet. Alice is in Morning Crew from early on, and one
+  // challenge at a time means she cannot also create the rhythm groups below.
+  const newcomer = async (name: string) => {
+    const u = await createTestUser(db, name);
+    users.push(u);
+    return u;
+  };
 
   let groupId = "";
   let inviteToken = "";
@@ -163,7 +172,7 @@ Deno.test("client-facing functions", async (t) => {
         plan_challenge_id: SEED_PLAN_ID,
         frequency: "weekdays",
         timezone: "America/New_York",
-      }, alice.token);
+      }, (await newcomer("weekday")).token);
       assertEquals(ok.status, 201);
 
       const created = await ok.json();
@@ -184,7 +193,7 @@ Deno.test("client-facing functions", async (t) => {
         plan_challenge_id: SEED_PLAN_ID,
         frequency: "four_per_week",
         timezone: "UTC",
-      }, alice.token);
+      }, (await newcomer("four")).token);
       assertEquals(four.status, 201);
       groupIds.push((await four.json()).group_id);
 
@@ -194,7 +203,7 @@ Deno.test("client-facing functions", async (t) => {
         frequency: "custom",
         timezone: "UTC",
         custom_days: [2, 4, 6],
-      }, alice.token);
+      }, (await newcomer("custom")).token);
       assertEquals(custom.status, 201);
       const customId = (await custom.json()).group_id;
       groupIds.push(customId);
@@ -555,6 +564,59 @@ Deno.test("client-facing functions", async (t) => {
         assertEquals(day!.participation_count, 1);
       },
     );
+
+    let hostInvite = "";
+    let hostGroup = "";
+
+    await t.step(
+      "someone whose challenge is still going can neither start nor join another",
+      async () => {
+        // Alice and bob are both in Morning Crew, which is active.
+        const another = await createGroup(
+          { name: "Second Crew", plan_challenge_id: SEED_PLAN_ID },
+          alice.token,
+        );
+        assertEquals(another.status, 409);
+        assertEquals((await another.json()).error, ONGOING_GROUP_MESSAGE);
+
+        const host = await newcomer("host");
+        const hosted = await createGroup(
+          { name: "Host Crew", plan_challenge_id: SEED_PLAN_ID },
+          host.token,
+        );
+        assertEquals(hosted.status, 201);
+        const created = await hosted.json();
+        hostGroup = created.group_id;
+        hostInvite = created.invite_token;
+        groupIds.push(hostGroup);
+
+        const join = await joinGroup({ invite_token: hostInvite }, bob.token);
+        assertEquals(join.status, 409);
+        assertEquals((await join.json()).error, ONGOING_GROUP_MESSAGE);
+        const { count } = await db
+          .from("group_members")
+          .select("user_id", { count: "exact", head: true })
+          .eq("group_id", hostGroup)
+          .eq("user_id", bob.id);
+        assertEquals(count, 0);
+      },
+    );
+
+    await t.step("once that challenge has finished, they can do both", async () => {
+      await db.from("groups").update({ challenge_status: "completed" }).eq("id", groupId);
+
+      // Same crew, new plan is a new group: the old one stays theirs, finished.
+      const next = await createGroup(
+        { name: "Morning Crew", plan_challenge_id: SEED_PLAN_ID },
+        alice.token,
+      );
+      assertEquals(next.status, 201);
+      groupIds.push((await next.json()).group_id);
+
+      const join = await joinGroup({ invite_token: hostInvite }, bob.token);
+      assertEquals(join.status, 200);
+      assertEquals((await join.json()).challenge_status, "active");
+    });
   } finally {
     for (const id of groupIds) await db.from("groups").delete().eq("id", id);
     await deleteTestUsers(db, users);
