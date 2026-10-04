@@ -19,3 +19,4 @@ Dwell's backend is Supabase: Postgres, Auth, Realtime, and Edge Functions (TypeS
 - Commit messages are a single line stating the main purpose of the change. No body, no bullet list, and no trailers. Never add yourself as a co-author or contributor.
 - Never push to `main`. Work on a branch and open a PR for review, even for a one-line change. The PR body may carry the detail that commit messages deliberately leave out.
 - Push goes out over APNs from `send-push`, which only other functions call. A nudge is still written as an `ai_insights` row first (type `nudge`, `target_user_id` set); the push carries the same words and is best effort.
+- Deploy a function from its branch when asked, but do not `supabase db push` a migration until the PR review on it is resolved: a pushed migration can no longer be amended, so a reviewer's correction to it has nowhere to go.

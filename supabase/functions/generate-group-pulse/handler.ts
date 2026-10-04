@@ -1,12 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
+import {
+  clip,
+  type Member,
+  otherLanguages,
+  readMembers,
+  translateCard,
+} from "../_shared/insight_card.ts";
 import { type Ai, GENERATE_MODEL } from "../_shared/openai.ts";
-
-interface Member {
-  user_id: string;
-  line: string;
-}
 
 interface Pulse {
   headline: string | null;
@@ -88,7 +90,14 @@ export async function handleGenerateGroupPulse(
   const pulse = await writePulse(ai, day, authored, totalDays, memberCount);
 
   const targets = await otherLanguages(db, day.group_id);
-  const translated = targets.length > 0 ? await translatePulse(ai, pulse, targets) : null;
+  const translated = targets.length > 0
+    ? await translateCard(ai, {
+      headline: pulse.headline,
+      lede: pulse.lede,
+      summary: pulse.summary,
+      members: pulse.members,
+    }, targets)
+    : null;
 
   const row = {
     // Kept as the standfirst, so anything reading `content` today still works.
@@ -199,9 +208,9 @@ async function writePulse(
   try {
     const result = await ai.generateJson(prompt, GENERATE_MODEL);
     return {
-      headline: text(result.headline, 100),
-      lede: text(result.lede, 60),
-      summary: text(result.summary, 2000) ?? "",
+      headline: clip(result.headline, 100),
+      lede: clip(result.lede, 60),
+      summary: clip(result.summary, 2000) ?? "",
       members: readMembers(result.members, authored),
     };
   } catch (err) {
@@ -219,102 +228,5 @@ async function writePulse(
       GENERATE_MODEL,
     );
     return { headline: null, lede: null, summary, members: [] };
-  }
-}
-
-/** Maps the model's positions back to real people, dropping anything out of range. */
-function readMembers(
-  value: unknown,
-  authored: Array<{ user_id: string; text: string }>,
-): Member[] {
-  if (!Array.isArray(value)) return [];
-
-  const seen = new Set<string>();
-  const members: Member[] = [];
-
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") continue;
-    const { member, line } = entry as { member?: unknown; line?: unknown };
-    if (typeof member !== "number" || !Number.isInteger(member)) continue;
-    if (member < 1 || member > authored.length) continue;
-    // null is a real answer: that member named no intention. Drop it rather than
-    // letting it through as an empty line on the card.
-    if (typeof line !== "string" || line.trim() === "") continue;
-
-    const userId = authored[member - 1].user_id;
-    // One line per person: a model that attributes twice should not produce a card that
-    // shows the same face twice.
-    if (seen.has(userId)) continue;
-    seen.add(userId);
-    members.push({ user_id: userId, line: line.trim() });
-  }
-  return members;
-}
-
-function text(value: unknown, max: number): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (trimmed === "") return null;
-  return trimmed.length > max ? trimmed.slice(0, max).trimEnd() : trimmed;
-}
-
-/** Every language the group reads other than the one the pulse was written in. */
-async function otherLanguages(
-  db: SupabaseClient,
-  groupId: string,
-): Promise<string[]> {
-  const { data: members } = await db
-    .from("users")
-    .select("preferred_language, group_members!inner(group_id)")
-    .eq("group_members.group_id", groupId);
-
-  return [
-    ...new Set(
-      (members ?? [])
-        .map((m: { preferred_language: string }) => m.preferred_language)
-        .filter((lang: string) => lang && lang !== "en"),
-    ),
-  ];
-}
-
-/**
- * Translates the whole card at once, keyed by target language.
- *
- * Everything the model writes is English, so without this a French-reading member gets an
- * English pulse in an app whose premise is that a group spanning languages can read each
- * other. Failure is swallowed: an untranslated pulse beats no pulse.
- */
-async function translatePulse(
-  ai: Ai,
-  pulse: Pulse,
-  targets: string[],
-): Promise<Record<string, unknown> | null> {
-  try {
-    const result = await ai.generateJson(
-      [
-        "Translate this group reflection card. Keep it natural, not literal.",
-        `Return JSON keyed by these language codes: ${JSON.stringify(targets)}.`,
-        'Each value is { "headline", "lede", "summary", "members": [{ "user_id", "line" }] }',
-        "with the SAME user_id values, in the same order.",
-        "",
-        JSON.stringify({
-          headline: pulse.headline,
-          lede: pulse.lede,
-          summary: pulse.summary,
-          members: pulse.members,
-        }),
-      ].join("\n"),
-      GENERATE_MODEL,
-    );
-
-    const payload: Record<string, unknown> = {};
-    for (const lang of targets) {
-      const value = (result as Record<string, unknown>)[lang];
-      if (value && typeof value === "object") payload[lang] = value;
-    }
-    return Object.keys(payload).length > 0 ? payload : null;
-  } catch (err) {
-    console.error("group pulse translation failed, saving untranslated", err);
-    return null;
   }
 }

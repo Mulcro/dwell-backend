@@ -32,19 +32,38 @@ export interface Ai {
   generateText(prompt: string, model?: string): Promise<string>;
 }
 
+/**
+ * No call to OpenAI may hang a function. A stalled request fails after this long and
+ * surfaces as the same 502 a refused one does, so every caller's fallback path runs.
+ */
+const AI_TIMEOUT_MS = 60_000;
+
+export interface AiOptions {
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
 async function call(
   apiKey: string,
   path: string,
   body: unknown,
+  options: AiOptions,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`https://api.openai.com/v1/${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await (options.fetchImpl ?? fetch)(`https://api.openai.com/v1/${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(options.timeoutMs ?? AI_TIMEOUT_MS),
+    });
+  } catch (err) {
+    console.error(`openai ${path} did not answer`, err instanceof Error ? err.name : err);
+    throw new HttpError(502, "AI service unavailable");
+  }
 
   if (!res.ok) {
     // Log for us, stay generic for the client: upstream bodies can echo user content.
@@ -54,13 +73,13 @@ async function call(
   return await res.json();
 }
 
-export function createAi(apiKey: string): Ai {
+export function createAi(apiKey: string, options: AiOptions = {}): Ai {
   return {
     async moderate(input: string): Promise<ModerationResult> {
       const data = await call(apiKey, "moderations", {
         model: "omni-moderation-latest",
         input,
-      });
+      }, options);
       const results = data.results as Array<{ flagged: boolean }> | undefined;
       // Fail closed: if the shape is unexpected we treat it as flagged rather than
       // letting unmoderated content through the gate.
@@ -84,7 +103,7 @@ export function createAi(apiKey: string): Ai {
       const data = await call(apiKey, "moderations", {
         model: "omni-moderation-latest",
         input,
-      });
+      }, options);
       const results = data.results as Array<{ flagged: boolean }> | undefined;
       // Fail closed, exactly as the text path does: an unreadable answer is treated as
       // flagged rather than letting an unchecked image through.
@@ -97,7 +116,7 @@ export function createAi(apiKey: string): Ai {
         model,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
-      });
+      }, options);
       const choices = data.choices as Array<{ message: { content: string } }>;
       try {
         return JSON.parse(choices[0].message.content);
@@ -110,7 +129,7 @@ export function createAi(apiKey: string): Ai {
       const data = await call(apiKey, "chat/completions", {
         model,
         messages: [{ role: "user", content: prompt }],
-      });
+      }, options);
       const choices = data.choices as Array<{ message: { content: string } }>;
       return choices[0]?.message?.content ?? "";
     },
