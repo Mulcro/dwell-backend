@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
-import { type Ai, CLASSIFY_MODEL, GENERATE_MODEL } from "../_shared/openai.ts";
+import { otherLanguages, translateCard } from "../_shared/insight_card.ts";
+import { type Ai, CLASSIFY_MODEL } from "../_shared/openai.ts";
+import { type Recap, writeRecap } from "../_shared/recap.ts";
 
 /** Below this many approved reflections there is not enough to write a growth summary. */
 const ENOUGH_FOR_A_SUMMARY = 3;
@@ -13,6 +15,10 @@ const ENOUGH_FOR_A_SUMMARY = 3;
  * Writes the full growth summary when there is enough material, and a lighter recap
  * when there is not -- a group that fizzled still gets a closing note rather than an
  * empty screen or an AI straining to find meaning in two sentences.
+ *
+ * Either way the row carries the recap card the design renders: a headline that
+ * finishes "You kept coming back to…", a line per member, and how many of the plan's
+ * days the group showed up for. The prose stays in `content`.
  */
 export async function handleEndOfChallengeSummary(
   req: Request,
@@ -27,7 +33,7 @@ export async function handleEndOfChallengeSummary(
 
   const { data: group } = await db
     .from("groups")
-    .select("id, name, challenge_status, plan_challenges(title)")
+    .select("id, name, challenge_status, plan_challenges(title, day_count)")
     .eq("id", groupId)
     .maybeSingle();
   if (!group) throw new HttpError(404, "Group not found");
@@ -38,59 +44,96 @@ export async function handleEndOfChallengeSummary(
     .select("id", { count: "exact", head: true })
     .eq("group_id", groupId)
     .in("type", ["end_summary", "fallback_recap"]);
-
   if ((existing ?? 0) > 0) {
     return json({ status: "already_generated" });
   }
 
   const { data: days } = await db
     .from("day_instances")
-    .select("id")
+    .select("id, day_index, status")
     .eq("group_id", groupId);
-  const dayIds = (days ?? []).map((d: { id: string }) => d.id);
+  const dayList = (days ?? []) as Array<{ id: string; day_index: number; status: string }>;
+  const dayIndex = new Map(dayList.map((d) => [d.id, d.day_index]));
 
-  const { data: reflections } = dayIds.length > 0
+  const { data: reflections } = dayList.length > 0
     ? await db
       .from("reflections")
-      .select("content, transcript")
-      .in("day_instance_id", dayIds)
+      .select("user_id, day_instance_id, content, transcript")
+      .in("day_instance_id", dayList.map((d) => d.id))
       .eq("moderation_status", "approved")
     : { data: [] };
 
-  const texts = (reflections ?? [])
-    .map((r: { content: string | null; transcript: string | null }) => r.content ?? r.transcript)
-    .filter((t: string | null): t is string => Boolean(t && t.trim()));
+  const authored = (reflections ?? [])
+    .map((
+      r: {
+        user_id: string;
+        day_instance_id: string;
+        content: string | null;
+        transcript: string | null;
+      },
+    ) => ({
+      user_id: r.user_id,
+      day_index: dayIndex.get(r.day_instance_id) ?? 0,
+      text: (r.content ?? r.transcript ?? "").trim(),
+    }))
+    .filter((r: { text: string }) => r.text !== "")
+    .sort((a: { day_index: number }, b: { day_index: number }) => a.day_index - b.day_index);
 
-  const planTitle = (group.plan_challenges as { title?: string } | null)?.title ?? "the plan";
-  const isFull = texts.length >= ENOUGH_FOR_A_SUMMARY;
+  const plan = group.plan_challenges as { title?: string; day_count?: number } | null;
+  const planTitle = plan?.title ?? "the plan";
+  // "Showed up" is the group clearing a day, which is what the design counts.
+  const daysTotal = plan?.day_count ?? dayList.length;
+  const daysShowedUp = dayList
+    .filter((d) => d.status === "complete" || d.status === "threshold_met").length;
 
-  const content = isFull
-    ? await ai.generateText(
-      [
-        `A small group just finished "${planTitle}". Here is everything they shared.`,
-        "Write four sentences on how this group grew: what they wrestled with,",
-        "what changed, and what they can carry forward. Address them as 'you'.",
-        "Do not name individuals or quote anyone directly.",
-        "",
-        ...texts.map((t, i) => `Reflection ${i + 1}: ${t}`),
-      ].join("\n"),
-      GENERATE_MODEL,
-    )
-    : await ai.generateText(
-      [
-        `A small group started "${planTitle}" but did not finish, sharing`,
-        `${texts.length} reflection(s) in total.`,
-        "Write two warm, non-judgmental sentences closing out the challenge.",
-        "Do not imply they failed, and do not invent detail about what they wrote.",
-      ].join("\n"),
-      CLASSIFY_MODEL,
-    );
+  const { count: memberCount } = await db
+    .from("group_members")
+    .select("user_id", { count: "exact", head: true })
+    .eq("group_id", groupId);
+
+  const isFull = authored.length >= ENOUGH_FOR_A_SUMMARY;
+  const recap: Recap = isFull
+    ? await writeRecap(ai, {
+      title: planTitle,
+      span: "the whole plan",
+      reflections: authored,
+      memberCount: memberCount ?? null,
+      daysShowedUp,
+      daysTotal,
+    })
+    : {
+      headline: null,
+      members: [],
+      summary: await ai.generateText(
+        [
+          `A small group started "${planTitle}" but did not finish, sharing`,
+          `${authored.length} reflection(s) in total.`,
+          "Write two warm, non-judgmental sentences closing out the challenge.",
+          "Do not imply they failed, and do not invent detail about what they wrote.",
+        ].join("\n"),
+        CLASSIFY_MODEL,
+      ),
+    };
+
+  const card = { headline: recap.headline, summary: recap.summary, members: recap.members };
+  const targets = await otherLanguages(db, groupId);
+  const translated = targets.length > 0 ? await translateCard(ai, card, targets) : null;
 
   const { error } = await db.from("ai_insights").insert({
     group_id: groupId,
     scope: "group_challenge",
     type: isFull ? "end_summary" : "fallback_recap",
-    content,
+    // The prose stays where it always was, so anything reading `content` keeps working.
+    content: recap.summary,
+    payload: {
+      headline: recap.headline,
+      members: recap.members,
+      days_showed_up: daysShowedUp,
+      days_total: daysTotal,
+      reflection_count: authored.length,
+    },
+    language: "en",
+    translated_text: translated,
   });
 
   if (error) {

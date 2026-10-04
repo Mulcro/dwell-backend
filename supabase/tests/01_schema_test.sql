@@ -18,8 +18,8 @@ select has_table('public', 'leaderboard_entries', 'leaderboard_entries exists');
 -- PHASE1 #3: the inactivity prompt needs its own insight type and group-level state.
 select enum_has_labels(
   'public', 'insight_type',
-  array['group_pulse', 'nudge', 'end_summary', 'fallback_recap', 'inactivity_prompt'],
-  'insight_type carries inactivity_prompt'
+  array['group_pulse', 'nudge', 'end_summary', 'fallback_recap', 'inactivity_prompt', 'weekly_recap'],
+  'insight_type carries inactivity_prompt and weekly_recap'
 );
 select has_column('public', 'groups', 'consecutive_silent_days', 'groups tracks silent days');
 select has_column('public', 'groups', 'prompt_pending', 'groups tracks a pending prompt');

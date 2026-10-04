@@ -160,7 +160,7 @@ Deno.test("system-triggered functions", async (t) => {
               key(),
             )
           ),
-          invoke(() => handleWeeklyCronLeaderboard(unauthorized, db, key())),
+          invoke(() => handleWeeklyCronLeaderboard(unauthorized, db, fakeAi(), key())),
         ]);
         assertEquals(results.map((r) => r.status), [
           401,
@@ -552,7 +552,7 @@ Deno.test("system-triggered functions", async (t) => {
         await addReflection(db, f.dayId, alice, "approved", HOUR);
         await addReflection(db, f.dayId, bob, "pending", HOUR);
 
-        await invoke(() => handleWeeklyCronLeaderboard(serviceRequest(), db, key()));
+        await invoke(() => handleWeeklyCronLeaderboard(serviceRequest(), db, fakeAi(), key()));
 
         const { data: entries } = await db
           .from("leaderboard_entries")
@@ -567,7 +567,7 @@ Deno.test("system-triggered functions", async (t) => {
         assertEquals(score(bob.id), 0);
 
         // Re-running recomputes in place rather than duplicating.
-        await invoke(() => handleWeeklyCronLeaderboard(serviceRequest(), db, key()));
+        await invoke(() => handleWeeklyCronLeaderboard(serviceRequest(), db, fakeAi(), key()));
         const { count } = await db
           .from("leaderboard_entries")
           .select("id", { count: "exact", head: true })

@@ -50,8 +50,8 @@ Not part of the public client-facing surface — invoked only by pg_cron, a data
 | /send-push | Another function, service-role authenticated (today: daily-cron-nudge, once per nudge row) | { user_id, title, body } → { delivered, reason? }. Looks up users.push_token, POSTs one alert to APNs with the group name as title, and on a 410 nulls the token so a dead device is not retried every tick. No token or a refusal returns delivered: false; it never raises |
 | /daily-cron-autoskip | pg_cron, daily 00:15 UTC | Sole writer of consecutive_below_threshold_count: increments it once per day for each active group's current below-threshold day, and once it hits the group's auto_skip_after_days, marks that day missed, opens the next day, and resets the counter to 0 |
 | /daily-cron-inactivity-check | pg_cron, daily 00:30 UTC | At 3 consecutive silent days group-wide, surfaces the Continue/Pause/End prompt to every member (once, not re-fired while pending). The same job runs the longer-horizon sweep that flips 14-day-silent, non-completed groups to expired_incomplete and fires end-of-challenge-summary |
-| /weekly-cron-leaderboard | pg_cron, weekly Monday 00:00 UTC | Computes each member's own participation_score for the past 7 days per group |
-| /end-of-challenge-summary | Invoked directly by another function when a group reaches its final day or transitions to abandoned/expired_incomplete | Full AI growth summary if there's enough content; otherwise a lighter fallback_recap |
+| /weekly-cron-leaderboard | pg_cron, weekly Monday 00:00 UTC | Computes each member's own participation_score for the past 7 days per group, then writes one weekly_recap insight per group for the week just ended: the same card shape as end_summary (headline, members, days_showed_up, days_total) with week_start in the payload. One per group per week; a group with nothing posted that week gets none |
+| /end-of-challenge-summary | Invoked directly by another function when a group reaches its final day or transitions to abandoned/expired_incomplete | Full AI growth summary if there's enough content; otherwise a lighter fallback_recap. Either way the row carries the recap card: payload { headline (finishes "You kept coming back to…"), members: [{ user_id, line }] (what each person brought), days_showed_up (days the group cleared), days_total (the plan's length), reflection_count }, with the prose in content and translated_text keyed by the languages the group reads |
 
 Note: **check-day-threshold and open_ready_next_days are not HTTP endpoints at all** — check-day-threshold is a plain plpgsql trigger, and open_ready_next_days is a plpgsql function run directly by pg_cron (advancement is pure DB work, so it needs no Edge Function). Both are covered under Database, not here, since they have zero API surface.
 
@@ -140,7 +140,7 @@ create type source_type as enum ('youversion_plan', 'custom');
 create type day_status as enum ('open', 'threshold_met', 'complete', 'missed');
 create type challenge_status as enum ('forming', 'active', 'paused', 'completed', 'abandoned', 'expired_incomplete');
 create type insight_scope as enum ('day_instance', 'group_challenge');
-create type insight_type as enum ('group_pulse', 'nudge', 'end_summary', 'fallback_recap');
+create type insight_type as enum ('group_pulse', 'nudge', 'end_summary', 'fallback_recap', 'inactivity_prompt', 'weekly_recap');
 create type day_frequency as enum ('daily', 'weekdays', 'three_per_week');
 
 create table users (

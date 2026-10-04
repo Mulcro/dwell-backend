@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
-import { serviceRoleKeys, supabaseConfig } from "../_shared/env.ts";
+import { requireEnv, serviceRoleKeys, supabaseConfig } from "../_shared/env.ts";
 import { toErrorResponse } from "../_shared/http.ts";
+import { createAi } from "../_shared/openai.ts";
 import { handleWeeklyCronLeaderboard } from "./handler.ts";
 
 Deno.serve(async (req) => {
@@ -9,7 +10,8 @@ Deno.serve(async (req) => {
     const db = createClient(url, serviceRoleKey, {
       auth: { persistSession: false },
     });
-    return await handleWeeklyCronLeaderboard(req, db, serviceRoleKeys());
+    const ai = createAi(requireEnv("OPENAI_API_KEY"));
+    return await handleWeeklyCronLeaderboard(req, db, ai, serviceRoleKeys());
   } catch (err) {
     return toErrorResponse(err);
   }
