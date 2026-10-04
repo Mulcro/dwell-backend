@@ -162,7 +162,8 @@ create table plan_challenges (
   image_path text,              -- cover art: object key in the public plan-images bucket
   description text,             -- one or two sentences for the plan detail screen
   key_verse text,               -- verse body without quote marks; the client adds them
-  key_verse_ref text            -- human-readable reference for key_verse, e.g. Psalm 46:10
+  key_verse_ref text,           -- human-readable reference for key_verse, e.g. Psalm 46:10
+  listed boolean not null default true  -- in the picker; unlisted plans stay readable to members of a group on them
 );
 
 -- Per-day passage list for a plan. Seeded once by the mock PlanService (see 3.4), which stands in
@@ -178,9 +179,14 @@ create table plan_days (
 );
 
 -- The catalogue holds five plans: the two from the first redesign (When Life Gets Hard, The
--- Psalms: A Roadmap to Resilience), which carry no description, and the three the 02b
+-- Psalms: A Roadmap to Resilience), which carry no description and are UNLISTED since
+-- 2026-10-03 (KAN-19) so the picker shows only finished plans, and the three the 02b
 -- Plans screens define with full copy -- Be Still (3 days), Better Together (7) and Abide
--- (14). Each plan's cover is drawn by scripts/make-plan-cover.py and committed under
+-- (14). RLS hides an unlisted plan and its days from everyone except members of a group
+-- already reading it, so the picker query filters on listed = true (a member's catalogue
+-- read otherwise includes their own unlisted plan); create-group still accepts an unlisted
+-- plan by id, which is how the demo seed and the test fixtures keep their 7-day arc on
+-- When Life Gets Hard. Each plan's cover is drawn by scripts/make-plan-cover.py and committed under
 -- assets/plan-images/ before being uploaded with the service role.
 
 create table groups (
