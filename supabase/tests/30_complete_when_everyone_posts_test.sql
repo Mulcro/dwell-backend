@@ -2,7 +2,7 @@
 -- otherwise the final day waits for the sweep exactly as before.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(19);
 
 create table dispatch_log (name text, body jsonb);
 create or replace function public.dispatch_edge_function(p_name text, p_body jsonb)
@@ -124,6 +124,27 @@ select approve('eeeeeeee-0004-0000-0000-000000000005', '55555555-5555-5555-5555-
 select is((select challenge_status::text from groups where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
   'paused', 'a paused challenge is not completed from under the group');
 select is(summaries_for('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'), 0, 'and gets no summary');
+
+-- -------------------------- E: a founder who left cannot hold the challenge open
+insert into groups (id, name, plan_challenge_id, created_by, challenge_status) values
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', 'Departed Crew',
+   '00000000-0000-0000-0000-0000000000a1', '11111111-1111-1111-1111-111111111111', 'active');
+insert into day_instances (id, group_id, day_index, date, passage_ref, opened_at) values
+  ('dddddddd-ffff-ffff-ffff-dddddddddddd', 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+   7, current_date, 'REV.21.4', now() - interval '1 hour');
+insert into group_members (group_id, user_id, joined_at) values
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', '11111111-1111-1111-1111-111111111111', now() - interval '7 days'),
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', '22222222-2222-2222-2222-222222222222', now() - interval '7 days'),
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', '55555555-5555-5555-5555-555555555555', now() - interval '7 days');
+select approve('eeeeeeee-0005-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'dddddddd-ffff-ffff-ffff-dddddddddddd');
+-- Erin leaves after the final day opened; she can no longer post, so she no longer counts.
+delete from group_members
+ where group_id = 'ffffffff-ffff-ffff-ffff-ffffffffffff' and user_id = '55555555-5555-5555-5555-555555555555';
+select is((select challenge_status::text from groups where id = 'ffffffff-ffff-ffff-ffff-ffffffffffff'),
+  'active', 'one of the two remaining founders is not everyone');
+select approve('eeeeeeee-0005-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222', 'dddddddd-ffff-ffff-ffff-dddddddddddd');
+select is((select challenge_status::text from groups where id = 'ffffffff-ffff-ffff-ffff-ffffffffffff'),
+  'completed', 'both remaining founders are: a member who left cannot hold the challenge open');
 
 select * from finish();
 rollback;

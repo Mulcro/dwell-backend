@@ -7,10 +7,15 @@
 --       sweep, exactly as before; or
 --   (b) every member who was in the group when the final day opened has an approved
 --       reflection on it -> completed here, now.
--- Completion here does what the sweep does -- complete the day, flip the group, dispatch
+-- Completion here does what the sweep does -- flip the group, complete the day, dispatch
 -- the summary -- and the two cannot both fire: the sweep only takes threshold_met days,
--- and this path only completes a day once. The summary function is guarded by a unique
+-- and this path only flips an active group once, under its row lock, so a pause or end
+-- that lands meanwhile is never overwritten. The summary function is guarded by a unique
 -- index besides.
+--
+-- "Everyone" is everyone still in the group who had joined before the final day opened.
+-- Someone who has since left or deleted their account can neither post nor hold the
+-- group open, which is the same rule the threshold math applies.
 
 create or replace function public.check_day_threshold()
 returns trigger
@@ -29,7 +34,7 @@ declare
   v_day_count int;
   v_challenge_status text;
   v_members_posted int;
-  v_finished int;
+  v_closed int;
 begin
   select group_id, opened_at, day_index into v_group_id, v_opened_at, v_day_index
     from day_instances where id = new.day_instance_id;
@@ -79,12 +84,18 @@ begin
        and gm.joined_at <= v_opened_at;
 
     if v_members_posted >= v_member_count then
-      update day_instances set status = 'complete'
-        where id = new.day_instance_id and status in ('open', 'threshold_met');
-      get diagnostics v_finished = row_count;  -- 1 only for the call that finishes it
+      -- Take the group row before deciding. A pause or end committed by a member while
+      -- this approval was in flight must win: once the lock is ours, the status we read
+      -- is the current one, and a group that is no longer active is left exactly as the
+      -- member put it.
+      perform 1 from groups where id = v_group_id for update;
+      update groups set challenge_status = 'completed'
+        where id = v_group_id and challenge_status = 'active';
+      get diagnostics v_closed = row_count;  -- 1 only when it was still active, once
 
-      if v_finished = 1 then
-        update groups set challenge_status = 'completed' where id = v_group_id;
+      if v_closed = 1 then
+        update day_instances set status = 'complete'
+          where id = new.day_instance_id and status in ('open', 'threshold_met');
         perform public.dispatch_edge_function(
           'end-of-challenge-summary',
           jsonb_build_object('group_id', v_group_id)
