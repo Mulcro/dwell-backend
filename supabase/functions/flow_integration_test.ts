@@ -98,16 +98,20 @@ Deno.test("client-facing functions", async (t) => {
       }
     });
 
-    await t.step("create-group refuses a client-supplied threshold", async () => {
+    await t.step("create-group accepts a client-supplied threshold and stores 50", async () => {
+      // Every build shipped before KAN-43 sends the slider's value; refusing it broke
+      // group creation for all of them (KAN-49).
       const res = await createGroup(
-        { name: "Strict Crew", plan_challenge_id: SEED_PLAN_ID, catch_up_threshold_pct: 100 },
-        alice.token,
+        { name: "Old Build Crew", plan_challenge_id: SEED_PLAN_ID, catch_up_threshold_pct: 100 },
+        (await newcomer("oldbuild")).token,
       );
-      assertEquals(res.status, 400);
-      assertEquals(
-        (await res.json()).error,
-        "catch_up_threshold_pct is no longer supported; the threshold is 50% for every group",
-      );
+      assertEquals(res.status, 201);
+      const { group_id } = await res.json();
+      groupIds.push(group_id);
+
+      const { data: group } = await db
+        .from("groups").select("catch_up_threshold_pct").eq("id", group_id).single();
+      assertEquals(group!.catch_up_threshold_pct, 50);
     });
 
     await t.step(
