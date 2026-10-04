@@ -24,9 +24,11 @@ const FREQUENCIES = [
  * forming until someone joins; /join-group is what activates it and opens Day 1.
  *
  * The unlock threshold is not configurable (decided 2026-10-03): half the group has to
- * post for a day to unlock, every group. A `catch_up_threshold_pct` in the body is
- * refused, so a client that still offers the choice finds out rather than silently
- * creating a group with a different rule from the one it showed.
+ * post for a day to unlock, every group, and nothing a client sends changes that. A
+ * `catch_up_threshold_pct` in the body is accepted and ignored rather than refused: every
+ * build shipped before the threshold slider was removed (KAN-43) still sends one, and
+ * those builds stay installed on testers' phones. Its arrival is logged so we can see
+ * when old builds stop sending it.
  */
 const THRESHOLD_PCT = 50;
 export async function handleCreateGroup(
@@ -39,10 +41,7 @@ export async function handleCreateGroup(
   const name = requireString(body, "name");
   const planChallengeId = requireString(body, "plan_challenge_id");
   if (body.catch_up_threshold_pct !== undefined) {
-    throw new HttpError(
-      400,
-      "catch_up_threshold_pct is no longer supported; the threshold is 50% for every group",
-    );
+    console.log("create-group ignored a client threshold", body.catch_up_threshold_pct);
   }
   const autoSkipAfterDays = optionalInt(body, "auto_skip_after_days", 1, 30);
 
