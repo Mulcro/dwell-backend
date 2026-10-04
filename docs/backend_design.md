@@ -30,7 +30,7 @@ Base URL: `https://<project-ref>.supabase.co/functions/v1/<name>`. All require a
 
 | **Endpoint** | **Method** | **Auth** | **Request → Response** | **Description** |
 | --- | --- | --- | --- | --- |
-| /create-group | POST | Required | { name, plan_challenge_id, frequency?, timezone?, catch_up_threshold_pct?, auto_skip_after_days? } → { group_id, invite_token } | Creates a group in forming state plus a group_members row for the creator. frequency is 'daily' (default), 'weekdays' or 'three_per_week'; timezone is the creator's IANA zone, which decides which local day it is for the weekday-based rhythms |
+| /create-group | POST | Required | { name, plan_challenge_id, frequency?, timezone?, auto_skip_after_days? } → { group_id, invite_token } | Creates a group in forming state plus a group_members row for the creator. frequency is 'daily' (default), 'weekdays' or 'three_per_week'; timezone is the creator's IANA zone, which decides which local day it is for the weekday-based rhythms. The unlock threshold is fixed at 50% for every group (decided 2026-10-03); a catch_up_threshold_pct in the body is ignored |
 | /join-group | POST | Required | { invite_token } → { group_id, challenge_status } | Adds the caller to the group. If this join brings membership to 2, flips the group to active and creates the Day 1 row |
 | /preview-group | POST (RPC) | None — public | { invite_token } → { name, plan_title } | Lets the in-browser invite-link flow show "You've been invited to [Group] doing [Plan]" before the visitor signs in or installs the app. Newly identified while writing this section — the MVP Spec's "works in-browser before forcing install" join flow implied this endpoint but it was never explicitly spec'd until now. Implemented as a security definer Postgres function (see Database) rather than an Edge Function, since it's a single read with no logic |
 | /submit-reflection | POST | Required | { day_instance_id, media_type, content?, transcript?, language } → { reflection_id, moderation_status } | Inserts the reflection as moderation_status='pending' (this insert does NOT gate the day) → OpenAI Moderation check → if flagged, stops early (stays hidden, never counts toward threshold); if approved, flips moderation_status to 'approved', and it is that UPDATE that fires check-day-threshold (see Database), plus one tiered-LLM call for the sentiment tag, translations of the reflection (translated_text), a personalized response in the author's language (ai_response) and translations of that response (ai_response_translated), written back onto the row |
@@ -187,7 +187,7 @@ create table groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   plan_challenge_id uuid not null references plan_challenges(id),
-  catch_up_threshold_pct int not null default 50,
+  catch_up_threshold_pct int not null default 50,  -- always 50: not configurable since 2026-10-03, kept as a column so the threshold math is unchanged
   auto_skip_after_days int not null default 3,
   frequency day_frequency not null default 'daily',   -- how often a new day may open
   timezone text not null default 'UTC',               -- whose weekend counts as the weekend

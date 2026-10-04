@@ -89,6 +89,20 @@ Deno.test("client-facing functions", async (t) => {
       }
     });
 
+    await t.step("create-group ignores a client-supplied threshold: it is always 50", async () => {
+      const res = await createGroup(
+        { name: "Strict Crew", plan_challenge_id: SEED_PLAN_ID, catch_up_threshold_pct: 100 },
+        alice.token,
+      );
+      assertEquals(res.status, 201);
+      const { group_id } = await res.json();
+      groupIds.push(group_id);
+
+      const { data: group } = await db
+        .from("groups").select("catch_up_threshold_pct").eq("id", group_id).single();
+      assertEquals(group!.catch_up_threshold_pct, 50);
+    });
+
     await t.step(
       "create-group creates a forming group with its creator inside",
       async () => {
