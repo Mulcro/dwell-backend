@@ -183,8 +183,10 @@ create table plan_days (
 -- 2026-10-03 (KAN-19) so the picker shows only finished plans, and the three the 02b
 -- Plans screens define with full copy -- Be Still (3 days), Better Together (7) and Abide
 -- (14). RLS hides an unlisted plan and its days from everyone except members of a group
--- already reading it; create-group still accepts an unlisted plan by id, which is how the
--- demo seed and the test fixtures keep their 7-day arc on When Life Gets Hard. Each plan's cover is drawn by scripts/make-plan-cover.py and committed under
+-- already reading it, so the picker query filters on listed = true (a member's catalogue
+-- read otherwise includes their own unlisted plan); create-group still accepts an unlisted
+-- plan by id, which is how the demo seed and the test fixtures keep their 7-day arc on
+-- When Life Gets Hard. Each plan's cover is drawn by scripts/make-plan-cover.py and committed under
 -- assets/plan-images/ before being uploaded with the service role.
 
 create table groups (

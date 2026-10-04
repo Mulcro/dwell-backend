@@ -14,8 +14,10 @@ comment on column plan_challenges.listed is
 update plan_challenges set listed = false
  where id in ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a2');
 
--- Visibility follows the flag, with membership as the exception. A plan's days follow
--- the plan.
+-- Visibility follows the flag, with membership as the exception so a group can render
+-- the plan it is reading. The exception means a member's catalogue read includes their
+-- own unlisted plan, so the picker itself filters on `listed`; RLS cannot tell a picker
+-- read from a group's own plan read. A plan's days follow the plan.
 drop policy "read plans" on plan_challenges;
 create policy "read listed plans and your own" on plan_challenges
   for select to authenticated

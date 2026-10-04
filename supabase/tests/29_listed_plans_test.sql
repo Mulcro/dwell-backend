@@ -2,7 +2,7 @@
 -- plan can still see it and its days.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(10);
 
 insert into auth.users (id) values
   ('11111111-1111-1111-1111-111111111111'),  -- alice, in a group on an unlisted plan
@@ -38,6 +38,14 @@ select is((select count(*)::int from plan_challenges where id = '00000000-0000-0
   'a member of a group on the unlisted plan still sees it');
 select is((select count(*)::int from plan_days where plan_challenge_id = '00000000-0000-0000-0000-0000000000a1'), 7,
   'with all of its days');
+
+-- The membership exception is what lets her group render its plan; it is not a picker.
+-- The picker filters on `listed`, and that filter is what keeps the unfinished plan off it
+-- even for her.
+select is((select count(*)::int from plan_challenges), 4,
+  'so her catalogue read includes the unlisted plan she is reading');
+select is((select count(*)::int from plan_challenges where listed), 3,
+  'and filtering on listed gives her the same three-plan picker as everyone else');
 
 reset role;
 select * from finish();
