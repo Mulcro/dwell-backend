@@ -621,6 +621,71 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(join.status, 200);
       assertEquals((await join.json()).challenge_status, "active");
     });
+
+    await t.step("same crew, new plan: the old crew joins by id, nobody else can", async () => {
+      // A crew of three finishes a challenge.
+      const [lead, mate, third, stranger] = await Promise.all(
+        ["lead", "mate", "third", "stranger"].map(newcomer),
+      );
+      const old = await (await createGroup(
+        { name: "Old Crew", plan_challenge_id: SEED_PLAN_ID },
+        lead.token,
+      )).json();
+      groupIds.push(old.group_id);
+      await joinGroup({ invite_token: old.invite_token }, mate.token);
+      await joinGroup({ invite_token: old.invite_token }, third.token);
+
+      // Continuing a group that is still going is refused...
+      const early = await createGroup(
+        { name: "Too Soon", plan_challenge_id: SEED_PLAN_ID, continues_group_id: old.group_id },
+        lead.token,
+      );
+      assertEquals(early.status, 409);
+      assertEquals((await early.json()).error, "That group's challenge hasn't ended yet");
+
+      await db.from("groups").update({ challenge_status: "completed" }).eq("id", old.group_id);
+
+      // ...and so is continuing a group you were never in, which reads as not found.
+      const outsider = await createGroup(
+        { name: "Not Mine", plan_challenge_id: SEED_PLAN_ID, continues_group_id: old.group_id },
+        stranger.token,
+      );
+      assertEquals(outsider.status, 404);
+
+      const next = await createGroup(
+        { name: "Old Crew", plan_challenge_id: SEED_PLAN_ID, continues_group_id: old.group_id },
+        lead.token,
+      );
+      assertEquals(next.status, 201);
+      const created = await next.json();
+      groupIds.push(created.group_id);
+      const { data: stored } = await db
+        .from("groups").select("continues_group_id").eq("id", created.group_id).single();
+      assertEquals(stored!.continues_group_id, old.group_id);
+
+      // Someone from outside the old crew cannot join by id: it reads as an unknown invite.
+      const probe = await joinGroup({ group_id: created.group_id }, stranger.token);
+      assertEquals(probe.status, 404);
+
+      // A previous member accepts with one tap and the group activates.
+      const accepted = await joinGroup({ group_id: created.group_id }, mate.token);
+      assertEquals(accepted.status, 200);
+      assertEquals((await accepted.json()).challenge_status, "active");
+
+      // The same one-challenge rule as joining by code.
+      const busy = await (await createGroup(
+        { name: "Elsewhere", plan_challenge_id: SEED_PLAN_ID },
+        stranger.token,
+      )).json();
+      groupIds.push(busy.group_id);
+      await joinGroup({ invite_token: busy.invite_token }, third.token);
+      const blocked = await joinGroup({ group_id: created.group_id }, third.token);
+      assertEquals(blocked.status, 409);
+      assertEquals((await blocked.json()).error, ONGOING_GROUP_MESSAGE);
+
+      const neither = await joinGroup({}, mate.token);
+      assertEquals(neither.status, 400);
+    });
   } finally {
     for (const id of groupIds) await db.from("groups").delete().eq("id", id);
     await deleteTestUsers(db, users);

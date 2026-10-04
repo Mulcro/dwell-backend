@@ -5,6 +5,7 @@ import {
   ONGOING_GROUP_MESSAGE,
   ONGOING_GROUP_SQLSTATE,
   requireNoOngoingGroup,
+  TERMINAL_STATUSES,
 } from "../_shared/membership.ts";
 
 const FREQUENCIES = [
@@ -17,7 +18,7 @@ const FREQUENCIES = [
 
 /**
  * POST /create-group
- * { name, plan_challenge_id, auto_skip_after_days? }
+ * { name, plan_challenge_id, auto_skip_after_days?, continues_group_id? }
  *   -> { group_id, invite_token }
  *
  * Creates a group in `forming` plus the creator's membership row. The group stays
@@ -29,6 +30,10 @@ const FREQUENCIES = [
  * build shipped before the threshold slider was removed (KAN-43) still sends one, and
  * those builds stay installed on testers' phones. Its arrival is logged so we can see
  * when old builds stop sending it.
+ *
+ * `continues_group_id` marks the group as "same crew, new plan" (KAN-50): the finished
+ * group's members then see it in my_continuations() and can join it by id. The caller
+ * must have been a member of that group, and its challenge must have ended.
  */
 const THRESHOLD_PCT = 50;
 export async function handleCreateGroup(
@@ -101,6 +106,11 @@ export async function handleCreateGroup(
     throw new HttpError(422, "That plan is not ready to use yet");
   }
 
+  const continuesGroupId = body.continues_group_id === undefined
+    ? null
+    : requireString(body, "continues_group_id");
+  if (continuesGroupId) await requireContinuable(db, userId, continuesGroupId);
+
   // Last, after every input check: one challenge at a time (KAN-46). A finished group
   // does not hold anyone back, so "same crew, new plan" is simply a new group.
   await requireNoOngoingGroup(db, userId);
@@ -115,6 +125,7 @@ export async function handleCreateGroup(
       timezone,
       custom_days: customDays,
       catch_up_threshold_pct: THRESHOLD_PCT,
+      continues_group_id: continuesGroupId,
       ...(autoSkipAfterDays !== undefined ? { auto_skip_after_days: autoSkipAfterDays } : {}),
     })
     .select("id, invite_token")
@@ -143,6 +154,33 @@ export async function handleCreateGroup(
   }
 
   return json({ group_id: group.id, invite_token: group.invite_token }, 201);
+}
+
+/**
+ * A new group may continue a finished one only if the caller was in it. A group the
+ * caller was never in answers exactly like one that does not exist, so the endpoint
+ * cannot be used to probe for groups.
+ */
+async function requireContinuable(
+  db: SupabaseClient,
+  userId: string,
+  groupId: string,
+): Promise<void> {
+  const { data, error } = await db
+    .from("group_members")
+    .select("groups!inner(challenge_status)")
+    .eq("group_id", groupId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    console.error("create-group could not check the continued group", error);
+    throw new HttpError(500, "Could not check that group");
+  }
+  if (!data) throw new HttpError(404, "Group to continue not found");
+  const status = (data.groups as unknown as { challenge_status: string }).challenge_status;
+  if (!TERMINAL_STATUSES.includes(status)) {
+    throw new HttpError(409, "That group's challenge hasn't ended yet");
+  }
 }
 
 /** A timezone the database will also accept; a bad one would silently shift the rhythm. */
