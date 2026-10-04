@@ -89,6 +89,18 @@ Deno.test("client-facing functions", async (t) => {
       }
     });
 
+    await t.step("create-group refuses a client-supplied threshold", async () => {
+      const res = await createGroup(
+        { name: "Strict Crew", plan_challenge_id: SEED_PLAN_ID, catch_up_threshold_pct: 100 },
+        alice.token,
+      );
+      assertEquals(res.status, 400);
+      assertEquals(
+        (await res.json()).error,
+        "catch_up_threshold_pct is no longer supported; the threshold is 50% for every group",
+      );
+    });
+
     await t.step(
       "create-group creates a forming group with its creator inside",
       async () => {
@@ -105,11 +117,13 @@ Deno.test("client-facing functions", async (t) => {
 
         const { data: group } = await db
           .from("groups")
-          .select("challenge_status, created_by")
+          .select("challenge_status, created_by, catch_up_threshold_pct")
           .eq("id", groupId)
           .single();
         assertEquals(group!.challenge_status, "forming");
         assertEquals(group!.created_by, alice.id);
+        // The only threshold there is.
+        assertEquals(group!.catch_up_threshold_pct, 50);
 
         // A group whose creator is not a member would be invisible to everyone.
         const { count } = await db

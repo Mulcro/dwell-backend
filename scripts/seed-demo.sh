@@ -73,10 +73,11 @@ read -r g1 inv1 < <(make_group "Demo: Forming" forming "")
 echo "  demo-forming@dwell.test    -> Demo: Forming        invite=$inv1"
 
 # -------------------------------------------------------- 2. BELOW THRESHOLD
-# Three members at 100%, only the owner has posted, so the day stays locked. The two
-# fillers exist only to make up the numbers and belong to no other group.
+# Three members and only the owner has posted: one of three is under the fixed 50%
+# threshold, so the day stays locked. The two fillers exist only to make up the numbers
+# and belong to no other group.
 user locked; user locked-b; user locked-c
-read -r g2 inv2 < <(make_group "Demo: Below threshold" locked ",\"catch_up_threshold_pct\":100")
+read -r g2 inv2 < <(make_group "Demo: Below threshold" locked "")
 post join-group "${TOK[locked-b]}" "{\"invite_token\":\"$inv2\"}" > /dev/null
 post join-group "${TOK[locked-c]}" "{\"invite_token\":\"$inv2\"}" > /dev/null
 # Everyone must predate the day, or late joiners are excluded from its maths.

@@ -12,12 +12,18 @@ const FREQUENCIES = [
 
 /**
  * POST /create-group
- * { name, plan_challenge_id, catch_up_threshold_pct?, auto_skip_after_days? }
+ * { name, plan_challenge_id, auto_skip_after_days? }
  *   -> { group_id, invite_token }
  *
  * Creates a group in `forming` plus the creator's membership row. The group stays
  * forming until someone joins; /join-group is what activates it and opens Day 1.
+ *
+ * The unlock threshold is not configurable (decided 2026-10-03): half the group has to
+ * post for a day to unlock, every group. A `catch_up_threshold_pct` in the body is
+ * refused, so a client that still offers the choice finds out rather than silently
+ * creating a group with a different rule from the one it showed.
  */
+const THRESHOLD_PCT = 50;
 export async function handleCreateGroup(
   req: Request,
   db: SupabaseClient,
@@ -27,7 +33,12 @@ export async function handleCreateGroup(
 
   const name = requireString(body, "name");
   const planChallengeId = requireString(body, "plan_challenge_id");
-  const thresholdPct = optionalInt(body, "catch_up_threshold_pct", 1, 100);
+  if (body.catch_up_threshold_pct !== undefined) {
+    throw new HttpError(
+      400,
+      "catch_up_threshold_pct is no longer supported; the threshold is 50% for every group",
+    );
+  }
   const autoSkipAfterDays = optionalInt(body, "auto_skip_after_days", 1, 30);
 
   // Reading rhythm (design doc 4.1). Weekday boundaries are judged in the group's own
@@ -95,7 +106,7 @@ export async function handleCreateGroup(
       frequency,
       timezone,
       custom_days: customDays,
-      ...(thresholdPct !== undefined ? { catch_up_threshold_pct: thresholdPct } : {}),
+      catch_up_threshold_pct: THRESHOLD_PCT,
       ...(autoSkipAfterDays !== undefined ? { auto_skip_after_days: autoSkipAfterDays } : {}),
     })
     .select("id, invite_token")
