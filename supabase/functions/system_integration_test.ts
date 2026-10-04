@@ -69,6 +69,22 @@ async function makeGroup(
     timezone?: string;
   } = {},
 ): Promise<Fixture> {
+  // One challenge at a time is enforced in the database, and every step builds a fresh
+  // group for the same people, so whatever group the last step left them in is retired
+  // first. That also keeps an earlier step's group out of the crons the next one runs.
+  const { data: prior } = await db
+    .from("group_members")
+    .select("group_id")
+    .in("user_id", members.map((m) => m.id));
+  const priorIds = (prior ?? []).map((r: { group_id: string }) => r.group_id);
+  if (priorIds.length > 0) {
+    await db
+      .from("groups")
+      .update({ challenge_status: "abandoned" })
+      .in("id", priorIds)
+      .not("challenge_status", "in", "(completed,abandoned,expired_incomplete)");
+  }
+
   const { data: group } = await db
     .from("groups")
     .insert({
@@ -85,13 +101,14 @@ async function makeGroup(
     .select("id")
     .single();
 
-  await db.from("group_members").insert(
+  const { error: memberError } = await db.from("group_members").insert(
     members.map((m) => ({
       group_id: group!.id,
       user_id: m.id,
       joined_at: ago(30 * DAY),
     })),
   );
+  if (memberError) throw new Error(`fixture membership failed: ${memberError.message}`);
 
   const { data: day } = await db
     .from("day_instances")

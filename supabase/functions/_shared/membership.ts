@@ -15,6 +15,12 @@ export const ONGOING_GROUP_MESSAGE =
   "Your group's challenge is still going. Finish it or leave the group first.";
 
 /**
+ * SQLSTATE raised by the one_ongoing_group trigger. The function-level check below is a
+ * fast, friendly path; this is the authority when two requests race past it.
+ */
+export const ONGOING_GROUP_SQLSTATE = "DG409";
+
+/**
  * Throws 409 if the user is in a group whose challenge has not ended. `except` is the
  * group being joined, so re-tapping an invite to a group you are already in stays the
  * no-op it has always been.

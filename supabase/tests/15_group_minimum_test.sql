@@ -3,6 +3,11 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(7);
 
+-- These scenarios put one person in several live groups to keep the fixture small. One
+-- challenge at a time is tested on its own in 32; here it is switched off, inside this
+-- transaction only.
+alter table group_members disable trigger one_ongoing_group;
+
 insert into auth.users (id) values
   ('11111111-1111-1111-1111-111111111111'),
   ('22222222-2222-2222-2222-222222222222'),

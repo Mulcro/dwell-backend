@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
-import { requireNoOngoingGroup } from "../_shared/membership.ts";
+import {
+  ONGOING_GROUP_MESSAGE,
+  ONGOING_GROUP_SQLSTATE,
+  requireNoOngoingGroup,
+} from "../_shared/membership.ts";
 
 /**
  * POST /join-group
@@ -53,6 +57,10 @@ export async function handleJoinGroup(
     // the authoritative answer rather than a count read a moment earlier.
     if (memberError.code === "23514") {
       throw new HttpError(409, "This group is full");
+    }
+    // Another join or create for this person landed first; the database is the authority.
+    if (memberError.code === ONGOING_GROUP_SQLSTATE) {
+      throw new HttpError(409, ONGOING_GROUP_MESSAGE);
     }
     console.error("join-group member insert failed", memberError);
     throw new HttpError(500, "Could not join group");

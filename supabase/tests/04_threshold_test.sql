@@ -3,6 +3,11 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(10);
 
+-- These scenarios put one person in several live groups to keep the fixture small. One
+-- challenge at a time is tested on its own in 32; here it is switched off, inside this
+-- transaction only.
+alter table group_members disable trigger one_ongoing_group;
+
 -- Record dispatches instead of making them, so we can assert group-pulse fires exactly
 -- once. Replaced inside the transaction, so the real helper is restored on rollback.
 create table dispatch_log (name text, body jsonb);
