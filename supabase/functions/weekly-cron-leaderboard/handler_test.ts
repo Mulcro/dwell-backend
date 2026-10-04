@@ -128,7 +128,8 @@ async function run(db: unknown, ai: Ai | null) {
 
 Deno.test("the week's recap counts what was posted this week, on whichever day", async () => {
   const db = fakeDb();
-  const res = await run(db.client, recapAi());
+  const ai = recapAi();
+  const res = await run(db.client, ai);
   const body = await res.json();
 
   assertEquals(body.recaps, 1);
@@ -149,6 +150,11 @@ Deno.test("the week's recap counts what was posted this week, on whichever day",
   // All three posts, including the late one on last week's day.
   assertEquals(payload.reflection_count, 3);
   assertEquals(payload.week_start, body.week_start);
+
+  // Alice posted on two selected days but only one of them opened this week, so her
+  // fraction is over the days the total counts, never "2 of 2".
+  assertEquals(ai.prompts[0].includes("Member 1 (posted on 1 of 2 days):"), true);
+  assertEquals(ai.prompts[0].includes("Member 2 (posted on 1 of 2 days):"), true);
 
   // The recap's reflections are selected the way the leaderboard's are: every day of the
   // group's, filtered by when the post was made.
@@ -203,6 +209,69 @@ Deno.test("a group with nothing posted this week gets no recap, but keeps its le
   assertEquals(body.recaps, 0);
   assertEquals(db.state.inserted, null);
   assertEquals(db.state.upserted!.length, 2);
+});
+
+Deno.test("a stalled recap for one group does not hold up the others", async () => {
+  // Two groups; the first group's card generation never answers. With real AI calls the
+  // shared client's timeout would reject it; here the hang is simulated as a slow
+  // rejection and the pool must still write the second group's recap meanwhile.
+  const inserted: string[] = [];
+  const groups = ["g-stalls", "g-fine"];
+  const table = (name: string) => {
+    let head = false;
+    // deno-lint-ignore no-explicit-any
+    const api: any = {
+      select: (_c?: string, o?: { head?: boolean }) => {
+        head = Boolean(o?.head);
+        return api;
+      },
+      eq: () => api,
+      in: () => api,
+      gte: () => api,
+      maybeSingle: () => Promise.resolve({ data: { plan_challenges: { title: "T" } } }),
+      // deno-lint-ignore no-explicit-any
+      then: (resolve: any) => {
+        if (name === "groups") return resolve({ data: groups.map((id) => ({ id })), error: null });
+        if (name === "day_instances") return resolve({ data: DAYS });
+        if (name === "group_members") {
+          return resolve(head ? { count: 1 } : { data: [{ user_id: ALICE }] });
+        }
+        if (name === "reflections") {
+          return resolve(
+            head
+              ? { count: 1 }
+              : { data: [{ user_id: ALICE, day_instance_id: "d2", content: "x" }] },
+          );
+        }
+        if (name === "ai_insights") return resolve({ count: 0 });
+        if (name === "users") return resolve({ data: [{ preferred_language: "en" }] });
+        return resolve({ data: [] });
+      },
+      insert: (row: Record<string, unknown>) => {
+        inserted.push(row.group_id as string);
+        return Promise.resolve({ error: null });
+      },
+      upsert: () => Promise.resolve({ error: null }),
+    };
+    return api;
+  };
+  let calls = 0;
+  const ai: Ai = {
+    moderate: () => Promise.resolve({ flagged: false }),
+    moderateImage: () => Promise.resolve({ flagged: false }),
+    generateText: () => Promise.reject(new Error("still down")),
+    generateJson: () => {
+      // The first group's call is the slow one; it fails after everyone else is done.
+      if (calls++ === 0) {
+        return new Promise((_r, reject) => setTimeout(() => reject(new Error("timeout")), 50));
+      }
+      return Promise.resolve({ headline: "h", summary: "s", members: [] });
+    },
+  };
+
+  const body = await (await run({ from: table }, ai)).json();
+  assertEquals(inserted, ["g-fine"]);
+  assertEquals(body.recaps, 1);
 });
 
 Deno.test("a recap that cannot be written does not cost the leaderboard", async () => {

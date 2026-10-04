@@ -109,17 +109,24 @@ export async function handleWeeklyCronLeaderboard(
   if (!ai) {
     console.warn("weekly recaps skipped: OPENAI_API_KEY is not set");
   } else {
-    const ids = [...groupDays.keys()];
-    for (let i = 0; i < ids.length; i += RECAPS_AT_ONCE) {
-      const batch = ids.slice(i, i + RECAPS_AT_ONCE).map((id) =>
-        writeWeeklyRecap(db, ai, id, groupDays.get(id) ?? [], weekStart, weekStartDate)
-      );
-      for (const outcome of await Promise.allSettled(batch)) {
-        if (outcome.status === "fulfilled" && outcome.value) recaps++;
-        // The recap is a courtesy; a failure is logged and the next group still runs.
-        if (outcome.status === "rejected") console.error("weekly recap failed", outcome.reason);
+    // A small pool rather than batches: a stalled recap holds one slot while the other
+    // groups keep flowing, and every AI call inside has its own timeout.
+    const queue = [...groupDays.keys()];
+    const worker = async () => {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        try {
+          if (
+            await writeWeeklyRecap(db, ai, id, groupDays.get(id) ?? [], weekStart, weekStartDate)
+          ) {
+            recaps++;
+          }
+        } catch (err) {
+          // The recap is a courtesy; a failure is logged and the next group still runs.
+          console.error("weekly recap failed", err);
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: RECAPS_AT_ONCE }, worker));
   }
 
   return json({ week_start: weekStart, entries: rows.length, recaps });
@@ -202,6 +209,7 @@ async function writeWeeklyRecap(
     memberCount: memberCount ?? null,
     daysShowedUp,
     daysTotal,
+    countedDays: week.map((d) => d.day_index),
     thin: authored.length < THIN_WEEK,
   });
 

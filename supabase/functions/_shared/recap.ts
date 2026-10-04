@@ -21,6 +21,12 @@ export interface RecapInput {
   /** Days the group cleared against days that counted; null when there were none. */
   daysShowedUp: number | null;
   daysTotal: number | null;
+  /**
+   * The day indexes daysTotal counts. A member's "posted on X of N days" counts only
+   * these, so a post on a day outside the window never reads as "2 of 1". Omit when
+   * every day counts.
+   */
+  countedDays?: number[];
   /** Little material: close the span warmly in two sentences rather than four on growth. */
   thin?: boolean;
 }
@@ -83,7 +89,11 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     ...people.map((p, i) =>
       [
         `Member ${i + 1}` +
-        (input.daysTotal ? ` (posted on ${p.days.length} of ${input.daysTotal} days):` : ":"),
+        (input.daysTotal
+          ? ` (posted on ${
+            postedOnCountedDays(p.days, input.countedDays)
+          } of ${input.daysTotal} days):`
+          : ":"),
         ...p.days.map((d) => `  Day ${d.day_index}: ${d.text}`),
       ].join("\n")
     ),
@@ -117,4 +127,15 @@ export async function writeRecap(ai: Ai, input: RecapInput): Promise<Recap> {
     );
     return { headline: null, summary, members: [] };
   }
+}
+
+/** Distinct days this person posted on, among the days the total counts. */
+function postedOnCountedDays(
+  days: Array<{ day_index: number }>,
+  counted: number[] | undefined,
+): number {
+  const set = new Set(
+    days.map((d) => d.day_index).filter((i) => counted === undefined || counted.includes(i)),
+  );
+  return set.size;
 }

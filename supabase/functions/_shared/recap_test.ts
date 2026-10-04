@@ -63,6 +63,14 @@ Deno.test("members are numbered per person in first-posted order, with every day
   assertEquals(prompt.includes("showed up on 6 of 7 days and it has 3 members"), true);
 });
 
+Deno.test("a member's day fraction counts only the days the total counts", async () => {
+  const model = ai(() => Promise.resolve({ headline: "h", summary: "s", members: [] }));
+  // Only day 3 is in the window: Alice's day-1 post is real material but not a counted day.
+  await writeRecap(model, { ...input, daysShowedUp: 1, daysTotal: 1, countedDays: [3] });
+  assertEquals(model.prompts[0].includes("Member 1 (posted on 1 of 1 days):"), true);
+  assertEquals(model.prompts[0].includes("Member 2 (posted on 0 of 1 days):"), true);
+});
+
 Deno.test("thin material changes the tone of the prose, not whether the card exists", async () => {
   const model = ai(() =>
     Promise.resolve({
