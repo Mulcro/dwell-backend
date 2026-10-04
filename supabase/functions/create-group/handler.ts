@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
+import { requireNoOngoingGroup } from "../_shared/membership.ts";
 
 const FREQUENCIES = [
   "daily",
@@ -96,6 +97,10 @@ export async function handleCreateGroup(
     );
     throw new HttpError(422, "That plan is not ready to use yet");
   }
+
+  // Last, after every input check: one challenge at a time (KAN-46). A finished group
+  // does not hold anyone back, so "same crew, new plan" is simply a new group.
+  await requireNoOngoingGroup(db, userId);
 
   const { data: group, error: groupError } = await db
     .from("groups")

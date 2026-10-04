@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
+import { requireNoOngoingGroup } from "../_shared/membership.ts";
 
 /**
  * POST /join-group
@@ -35,6 +36,10 @@ export async function handleJoinGroup(
   ) {
     throw new HttpError(409, "This challenge has already ended");
   }
+
+  // One challenge at a time (KAN-46). The group being joined is excluded, so tapping
+  // the invite to a group you are already in stays a no-op.
+  await requireNoOngoingGroup(db, userId, group.id);
 
   // on_conflict makes a second tap a no-op instead of a duplicate-key error.
   const { error: memberError } = await db
