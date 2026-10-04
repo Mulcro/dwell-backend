@@ -57,7 +57,10 @@ insert into group_members (group_id, user_id) values
   ('cccccccc-cccc-cccc-cccc-cccccccccccc', '33333333-3333-3333-3333-333333333333');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222"}', true);
-select is((select array_agg(name order by created_at desc) from public.my_continuations()),
+-- Ordered by the position the function returned each row in, so this fails if the
+-- function itself stops returning newest first.
+select is((select array_agg(name order by ordinality)
+             from public.my_continuations() with ordinality),
   array['Gallop Again', 'Gallop'], 'several successors all show, newest first');
 
 -- Once a successor has ended it is no longer offered.

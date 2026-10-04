@@ -27,7 +27,17 @@ export async function handleJoinGroup(
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
 
-  const group = body.invite_token !== undefined
+  const hasToken = body.invite_token !== undefined;
+  const hasId = body.group_id !== undefined;
+  if (hasToken && hasId) {
+    // Two identifiers could name two groups; joining either silently would be a guess.
+    throw new HttpError(400, "Send invite_token or group_id, not both");
+  }
+  if (!hasToken && !hasId) {
+    throw new HttpError(400, "invite_token or group_id is required");
+  }
+
+  const group = hasToken
     ? await groupByInvite(
       db,
       // Forgives how the code was typed -- lower case from a pasted link, and the spaces
@@ -35,13 +45,8 @@ export async function handleJoinGroup(
       // exactly, or a code could preview fine and then fail to join.
       normalizeInviteCode(requireString(body, "invite_token")),
     )
-    : body.group_id !== undefined
-    ? await groupContinuedByCaller(db, userId, requireString(body, "group_id"))
-    : null;
+    : await groupContinuedByCaller(db, userId, requireString(body, "group_id"));
 
-  if (body.invite_token === undefined && body.group_id === undefined) {
-    throw new HttpError(400, "invite_token or group_id is required");
-  }
   if (!group) throw new HttpError(404, "Invite not found");
 
   if (
@@ -110,11 +115,12 @@ async function groupByInvite(
   db: SupabaseClient,
   inviteToken: string,
 ): Promise<JoinableGroup | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("groups")
     .select("id, plan_challenge_id, challenge_status")
     .eq("invite_token", inviteToken)
     .maybeSingle();
+  if (error) lookupFailed("invite", error);
   return data;
 }
 
@@ -124,20 +130,28 @@ async function groupContinuedByCaller(
   userId: string,
   groupId: string,
 ): Promise<JoinableGroup | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("groups")
     .select("id, plan_challenge_id, challenge_status, continues_group_id")
     .eq("id", groupId)
     .maybeSingle();
+  if (error) lookupFailed("group", error);
   if (!data?.continues_group_id) return null;
 
-  const { data: wasMember } = await db
+  const { data: wasMember, error: memberError } = await db
     .from("group_members")
     .select("user_id")
     .eq("group_id", data.continues_group_id)
     .eq("user_id", userId)
     .maybeSingle();
+  if (memberError) lookupFailed("previous membership", memberError);
   return wasMember ? data : null;
+}
+
+/** A failed lookup is a failure, not an absent invite: log it and say so. */
+function lookupFailed(what: string, error: unknown): never {
+  console.error(`join-group could not look up the ${what}`, error);
+  throw new HttpError(500, "Could not look up that invite");
 }
 
 /** Copies Day 1's passage out of the plan. The unique (group_id, day_index) key is the

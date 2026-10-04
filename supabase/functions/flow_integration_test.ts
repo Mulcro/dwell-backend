@@ -685,6 +685,14 @@ Deno.test("client-facing functions", async (t) => {
 
       const neither = await joinGroup({}, mate.token);
       assertEquals(neither.status, 400);
+
+      // A stale code alongside the invitation the user tapped must not pick for them.
+      const both = await joinGroup(
+        { invite_token: busy.invite_token, group_id: created.group_id },
+        mate.token,
+      );
+      assertEquals(both.status, 400);
+      assertEquals((await both.json()).error, "Send invite_token or group_id, not both");
     });
   } finally {
     for (const id of groupIds) await db.from("groups").delete().eq("id", id);
