@@ -20,7 +20,8 @@ const FREQUENCIES = [
  *
  * The unlock threshold is not configurable (decided 2026-10-03): half the group has to
  * post for a day to unlock, every group. A `catch_up_threshold_pct` in the body is
- * ignored rather than rejected, so an older client that still sends one keeps working.
+ * refused, so a client that still offers the choice finds out rather than silently
+ * creating a group with a different rule from the one it showed.
  */
 const THRESHOLD_PCT = 50;
 export async function handleCreateGroup(
@@ -32,6 +33,12 @@ export async function handleCreateGroup(
 
   const name = requireString(body, "name");
   const planChallengeId = requireString(body, "plan_challenge_id");
+  if (body.catch_up_threshold_pct !== undefined) {
+    throw new HttpError(
+      400,
+      "catch_up_threshold_pct is no longer supported; the threshold is 50% for every group",
+    );
+  }
   const autoSkipAfterDays = optionalInt(body, "auto_skip_after_days", 1, 30);
 
   // Reading rhythm (design doc 4.1). Weekday boundaries are judged in the group's own
