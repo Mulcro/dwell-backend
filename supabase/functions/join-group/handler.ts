@@ -9,11 +9,16 @@ import {
 
 /**
  * POST /join-group
- * { invite_token } -> { group_id, challenge_status }
+ * { invite_token } or { group_id } -> { group_id, challenge_status }
  *
  * Adds the caller to the group. The join that brings membership to 2 flips the group to
  * `active` and opens Day 1. Idempotent: re-joining returns the current state rather than
  * erroring, since the invite link can be tapped twice.
+ *
+ * `group_id` is the one-tap accept for "same crew, new plan" (KAN-50): allowed only when
+ * the caller was a member of the finished group this one continues. Anything else
+ * answers like an unknown invite, so ids cannot be probed. Every other rule is the same
+ * as joining by code.
  */
 export async function handleJoinGroup(
   req: Request,
@@ -21,16 +26,26 @@ export async function handleJoinGroup(
 ): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const body = await readJson<Record<string, unknown>>(req);
-  // Forgives how the code was typed -- lower case from a pasted link, and the spaces or
-  // dashes people add reading one out. Must match preview_group's normalization exactly,
-  // or a code could preview fine and then fail to join.
-  const inviteToken = normalizeInviteCode(requireString(body, "invite_token"));
 
-  const { data: group } = await db
-    .from("groups")
-    .select("id, plan_challenge_id, challenge_status")
-    .eq("invite_token", inviteToken)
-    .maybeSingle();
+  const hasToken = body.invite_token !== undefined;
+  const hasId = body.group_id !== undefined;
+  if (hasToken && hasId) {
+    // Two identifiers could name two groups; joining either silently would be a guess.
+    throw new HttpError(400, "Send invite_token or group_id, not both");
+  }
+  if (!hasToken && !hasId) {
+    throw new HttpError(400, "invite_token or group_id is required");
+  }
+
+  const group = hasToken
+    ? await groupByInvite(
+      db,
+      // Forgives how the code was typed -- lower case from a pasted link, and the spaces
+      // or dashes people add reading one out. Must match preview_group's normalization
+      // exactly, or a code could preview fine and then fail to join.
+      normalizeInviteCode(requireString(body, "invite_token")),
+    )
+    : await groupContinuedByCaller(db, userId, requireString(body, "group_id"));
 
   if (!group) throw new HttpError(404, "Invite not found");
 
@@ -92,6 +107,51 @@ export async function handleJoinGroup(
   }
 
   return json({ group_id: group.id, challenge_status: status });
+}
+
+type JoinableGroup = { id: string; plan_challenge_id: string; challenge_status: string };
+
+async function groupByInvite(
+  db: SupabaseClient,
+  inviteToken: string,
+): Promise<JoinableGroup | null> {
+  const { data, error } = await db
+    .from("groups")
+    .select("id, plan_challenge_id, challenge_status")
+    .eq("invite_token", inviteToken)
+    .maybeSingle();
+  if (error) lookupFailed("invite", error);
+  return data;
+}
+
+/** The group, but only if it continues a finished group the caller was in. */
+async function groupContinuedByCaller(
+  db: SupabaseClient,
+  userId: string,
+  groupId: string,
+): Promise<JoinableGroup | null> {
+  const { data, error } = await db
+    .from("groups")
+    .select("id, plan_challenge_id, challenge_status, continues_group_id")
+    .eq("id", groupId)
+    .maybeSingle();
+  if (error) lookupFailed("group", error);
+  if (!data?.continues_group_id) return null;
+
+  const { data: wasMember, error: memberError } = await db
+    .from("group_members")
+    .select("user_id")
+    .eq("group_id", data.continues_group_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (memberError) lookupFailed("previous membership", memberError);
+  return wasMember ? data : null;
+}
+
+/** A failed lookup is a failure, not an absent invite: log it and say so. */
+function lookupFailed(what: string, error: unknown): never {
+  console.error(`join-group could not look up the ${what}`, error);
+  throw new HttpError(500, "Could not look up that invite");
 }
 
 /** Copies Day 1's passage out of the plan. The unique (group_id, day_index) key is the
