@@ -90,3 +90,23 @@ Deno.test("a pasted PEM works as well as the base64 form", async () => {
   const apns = createApns({ ...config, authKeyBase64: await exportPKCS8(privateKey) }, apple.impl);
   assertEquals(await apns.send("a", { title: "t", body: "b" }), "sent");
 });
+
+Deno.test("custom keys ride beside aps, the alert stays title and body, and aps can't be replaced", async () => {
+  const apple = fakeApple(200);
+  await createApns(config, apple.impl).send("abc123", {
+    title: "Janet replied to your reflection",
+    body: "This encouraged me",
+    threadId: "reflection-1",
+    data: { type: "reply", comment_id: "c1", aps: "hijack" },
+  });
+
+  assertEquals(JSON.parse(apple.calls[0].init.body as string), {
+    type: "reply",
+    comment_id: "c1",
+    aps: {
+      alert: { title: "Janet replied to your reflection", body: "This encouraged me" },
+      sound: "default",
+      "thread-id": "reflection-1",
+    },
+  });
+});

@@ -40,7 +40,12 @@ export async function handleDailyCronNudge(
   }
 
   let written = 0;
-  const pushes: Array<{ user_id: string; title: string; body: string }> = [];
+  const pushes: Array<{
+    user_id: string;
+    title: string;
+    body: string;
+    data: Record<string, string>;
+  }> = [];
 
   for (const day of days ?? []) {
     const dayOpenedAt = new Date(day.opened_at).getTime();
@@ -109,6 +114,8 @@ export async function handleDailyCronNudge(
         user_id: member.user_id,
         title: (day.groups as unknown as { name: string }).name,
         body: content,
+        // So a tap opens the group's Home rather than wherever the app last was.
+        data: { type: "nudge", group_id: day.group_id, day_instance_id: day.id },
       });
     }
   }

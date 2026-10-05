@@ -20,6 +20,10 @@ export interface ApnsConfig {
 export interface PushMessage {
   title: string;
   body: string;
+  /** Groups notifications on the lock screen, e.g. every reply to one reflection. */
+  threadId?: string;
+  /** Custom keys delivered beside `aps`, so the app knows what to open on tap. */
+  data?: Record<string, string>;
 }
 
 /** sent: Apple accepted it. unregistered: the device is gone, drop its token. */
@@ -63,7 +67,7 @@ export function createApns(
           "apns-push-type": "alert",
           "apns-priority": "10",
         },
-        body: JSON.stringify({ aps: { alert: message, sound: "default" } }),
+        body: JSON.stringify(payload(message)),
       });
       if (res.ok) return "sent";
       // Apple explains a refusal in the body; it is worth a log line and nothing more.
@@ -73,6 +77,19 @@ export function createApns(
       return "failed";
     },
   };
+}
+
+/**
+ * The APNs body: the alert is title and body only, and the custom keys sit beside `aps`.
+ * `aps` is written last so no custom key can replace it.
+ */
+export function payload(message: PushMessage): Record<string, unknown> {
+  const aps: Record<string, unknown> = {
+    alert: { title: message.title, body: message.body },
+    sound: "default",
+  };
+  if (message.threadId) aps["thread-id"] = message.threadId;
+  return { ...(message.data ?? {}), aps };
 }
 
 /** The secret is normally base64 of the .p8 file, but a pasted PEM works too. */

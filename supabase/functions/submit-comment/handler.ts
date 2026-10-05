@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
+import type { Dispatch } from "../_shared/dispatch.ts";
 import { HttpError, json, optionalInt, readJson, requireString } from "../_shared/http.ts";
 import type { Ai } from "../_shared/openai.ts";
 
@@ -79,12 +80,26 @@ export interface Visibility {
   canSee(reflectionId: string, token: string): Promise<boolean>;
 }
 
+/**
+ * How a reply reaches the reflection's author (KAN-22). `defer` runs the push after the
+ * response is sent -- the runtime's waitUntil -- so a slow or failing push can never
+ * delay or fail the reply. Omitted in tests that are not about the push.
+ */
+export interface ReplyPush {
+  dispatch: Dispatch;
+  defer(work: Promise<unknown>): void;
+}
+
+/** About one line on a lock screen. */
+const PREVIEW_CHARS = 100;
+
 export async function handleSubmitComment(
   req: Request,
   db: SupabaseClient,
   ai: Ai,
   visibility: Visibility,
   media_store?: MediaStore,
+  push?: ReplyPush,
 ): Promise<Response> {
   const userId = await requireUser(req, db.auth);
   const token = req.headers.get("Authorization")?.slice(7) ?? "";
@@ -178,7 +193,96 @@ export async function handleSubmitComment(
     throw new HttpError(500, "Could not post your reply");
   }
 
+  // Only now that the reply exists, and never for a refused one (which threw above).
+  push?.defer(notifyAuthor(db, push.dispatch, {
+    reflectionId,
+    commentId: inserted.id,
+    replierId: userId,
+    text: body_text as string,
+    language,
+    translated,
+  }));
+
   return json({ comment_id: inserted.id }, 201);
+}
+
+/**
+ * Pushes the reflection's author: "{first name} replied to your reflection", a preview of
+ * the reply in their language when a translation exists, and the ids the app needs to
+ * open it. Skips a reply to your own reflection and an author with no device. Never
+ * throws: by the time this runs the reply is already posted.
+ */
+export async function notifyAuthor(
+  db: SupabaseClient,
+  dispatch: Dispatch,
+  reply: {
+    reflectionId: string;
+    commentId: string;
+    replierId: string;
+    text: string;
+    language: string;
+    translated: Record<string, unknown> | null;
+  },
+): Promise<void> {
+  try {
+    const { data: reflection } = await db
+      .from("reflections")
+      .select("user_id, day_instance_id")
+      .eq("id", reply.reflectionId)
+      .maybeSingle();
+    if (!reflection || reflection.user_id === reply.replierId) return;
+
+    const { data: author } = await db
+      .from("users")
+      .select("preferred_language, push_token")
+      .eq("id", reflection.user_id)
+      .maybeSingle();
+    if (!author?.push_token) return;
+
+    const { data: day } = await db
+      .from("day_instances")
+      .select("group_id")
+      .eq("id", reflection.day_instance_id)
+      .maybeSingle();
+    if (!day) return;
+
+    const { data: replier } = await db
+      .from("users")
+      .select("name")
+      .eq("id", reply.replierId)
+      .maybeSingle();
+    const firstName = (replier?.name ?? "").trim().split(/\s+/)[0] || "Someone";
+
+    const inTheirLanguage = author.preferred_language !== reply.language &&
+        typeof reply.translated?.[author.preferred_language] === "string"
+      ? reply.translated[author.preferred_language] as string
+      : reply.text;
+
+    await dispatch("send-push", {
+      user_id: reflection.user_id,
+      title: `${firstName} replied to your reflection`,
+      body: preview(inTheirLanguage),
+      thread_id: reply.reflectionId,
+      data: {
+        type: "reply",
+        group_id: day.group_id,
+        day_instance_id: reflection.day_instance_id,
+        reflection_id: reply.reflectionId,
+        comment_id: reply.commentId,
+      },
+    });
+  } catch (err) {
+    console.error("submit-comment could not push the author", err);
+  }
+}
+
+/** One line of the reply, cut at a word where possible. */
+function preview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= PREVIEW_CHARS) return flat;
+  const cut = flat.slice(0, PREVIEW_CHARS - 1);
+  const atWord = cut.lastIndexOf(" ");
+  return (atWord > PREVIEW_CHARS * 0.6 ? cut.slice(0, atWord) : cut).trimEnd() + "\u2026";
 }
 
 /** What the author reads, used when the client does not label the reply's language. */
