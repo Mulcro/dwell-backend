@@ -48,15 +48,15 @@ AI runs through every stage of the loop, each piece at the tier it needs. Calls 
 
 Design choices that matter:
 
-- **The model never sees a user id.** Members are numbered in the prompt and the answer is mapped back server-side, so attribution can't be hallucinated.
+- **Card generation never sends user ids to the model.** Members are numbered in the prompt and the answer is mapped back server-side, so attribution can't be hallucinated. Translating a finished card then sends its member ids along with the lines, so each translated line stays attributable.
 - **Counts are computed, never generated.** "Three of you" is only said when three is true; the model is given the numbers and told not to invent others.
-- **Every AI call degrades instead of failing.** A card that can't be parsed falls back to prose; a failed translation posts untranslated; enrichment failing never blocks a reflection from counting. Every call has a 60-second timeout.
+- **Optional AI work degrades instead of failing.** A card that can't be parsed falls back to prose; a failed translation posts untranslated; Eagle's reply failing never blocks a reflection from counting. **Moderation is the exception and fails closed:** if it can't complete, the post is not approved and is removed, so the member can retry. Every OpenAI call has a 60-second timeout.
 - **Everything the AI writes is translated** for the languages the group actually reads, with member lines kept attributable.
 
 ## YouVersion Platform
 
-- **Scripture:** `get-passage` fetches each day's passage text from the YouVersion Platform API (Berean Standard Bible), caches it permanently, and keeps the app key on the server.
-- **Sign-in:** `youversion-signin` verifies a YouVersion OIDC id_token against their JWKS and issues a normal Supabase session; `yv-callback` relays their PKCE flow back into the app. See `docs/backend_design.md` section 2.
+- **Scripture:** the in-app reader is YouVersion's own `BibleReaderView` from their Swift SDK, handed each day's reference. `get-passage` is the server-side fetch: plain passage text from the YouVersion Platform API (Berean Standard Bible), cached permanently, with the app key kept on the server.
+- **Sign-in:** `youversion-signin` verifies a YouVersion OIDC id_token against their JWKS and returns a single-use `token_hash`, which the client redeems with `verifyOtp` for a normal Supabase session. `yv-callback` relays their PKCE flow back into the app. See `docs/backend_design.md` section 2.
 
 ## Architecture
 
@@ -68,6 +68,7 @@ flowchart TB
     EF --> DB
     EF --> OAI[OpenAI<br/>moderation + generation]
     EF --> YV[YouVersion Platform<br/>passages + sign-in]
+    iOS -- Swift SDK reader --> YV
     EF --> APNs[Apple Push]
     CRON[pg_cron] --> DB
     DB -- pg_net trigger --> EF
@@ -86,7 +87,7 @@ flowchart TB
 | `submit-reflection`, `submit-comment` | app | Moderate, store, enrich and translate posts and replies |
 | `group-challenge-action` | app | Continue, pause or end a quiet challenge |
 | `set-avatar`, `delete-account` | app | Moderated profile pictures; full account erasure |
-| `get-passage` | app | Scripture text from YouVersion |
+| `get-passage` | app | Cached plain passage text from YouVersion (the reader itself is YouVersion's SDK) |
 | `youversion-signin`, `yv-callback` | app | YouVersion sign-in |
 | `generate-group-pulse` | database trigger | The daily Group Pulse card |
 | `end-of-challenge-summary` | challenge end (trigger, sweep, a member ending it, or expiry) | The closing recap |
