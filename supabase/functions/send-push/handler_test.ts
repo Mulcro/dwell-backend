@@ -14,7 +14,10 @@ function request(body: unknown, key = KEY): Request {
   });
 }
 
-function fakeDb(pushToken: string | null, options: { clearError?: Error } = {}) {
+function fakeDb(
+  pushToken: string | null,
+  options: { clearError?: Error; prefs?: Record<string, boolean> } = {},
+) {
   const state = {
     updated: null as Record<string, unknown> | null,
     filters: {} as Record<string, unknown>,
@@ -23,7 +26,11 @@ function fakeDb(pushToken: string | null, options: { clearError?: Error } = {}) 
   const api: any = {
     select: () => api,
     eq: () => api,
-    maybeSingle: () => Promise.resolve({ data: { push_token: pushToken }, error: null }),
+    maybeSingle: () =>
+      Promise.resolve({
+        data: { push_token: pushToken, notification_prefs: options.prefs ?? {} },
+        error: null,
+      }),
     update: (row: Record<string, unknown>) => {
       state.updated = row;
       // A thenable filter chain, as supabase-js builders are, so every .eq() is seen.
@@ -177,5 +184,29 @@ Deno.test("tap data must be flat strings and may not name aps", async () => {
       fakeApns("sent").apns,
     );
     assertEquals(res.status, 400);
+  }
+});
+
+Deno.test("a type the member turned off is not sent at all", async () => {
+  const apple = fakeApns("sent");
+  const res = await call(
+    request({ user_id: USER, title: "t", body: "b", data: { type: "reply" } }),
+    fakeDb("tok", { prefs: { reply: false } }).client,
+    apple.apns,
+  );
+  assertEquals(await res.json(), { delivered: false, reason: "muted" });
+  assertEquals(apple.sent.length, 0);
+});
+
+Deno.test("other types, and pushes with no type, still go out; a missing switch is on", async () => {
+  for (const data of [{ type: "nudge" }, undefined]) {
+    const apple = fakeApns("sent");
+    const res = await call(
+      request({ user_id: USER, title: "t", body: "b", ...(data ? { data } : {}) }),
+      fakeDb("tok", { prefs: { reply: false } }).client,
+      apple.apns,
+    );
+    assertEquals(await res.json(), { delivered: true });
+    assertEquals(apple.sent.length, 1);
   }
 });

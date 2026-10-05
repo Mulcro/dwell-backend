@@ -10,6 +10,10 @@ import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
  * { user_id, title, body, thread_id?, data? } -- `data` is a flat object of strings sent
  * beside `aps` so the app can open the right screen on tap (KAN-22).
  *
+ * The member's per-type switches are honoured here, the one place every sender goes
+ * through: a push whose `data.type` they have turned off is not sent at all, so it never
+ * reaches the lock screen. A missing switch is on.
+ *
  * Delivery is best effort. A member with no token, or whose device Apple no longer
  * knows, gets `delivered: false` and nothing else happens -- the ai_insights row that
  * prompted the push is still there for them in the app.
@@ -34,7 +38,7 @@ export async function handleSendPush(
 
   const { data: user, error } = await db
     .from("users")
-    .select("push_token")
+    .select("push_token, notification_prefs")
     .eq("id", userId)
     .maybeSingle();
   if (error) {
@@ -42,6 +46,10 @@ export async function handleSendPush(
     return json({ error: "Could not load the member" }, 500);
   }
   if (!user?.push_token) return json({ delivered: false, reason: "no_token" });
+
+  const type = message.data?.type;
+  const prefs = (user.notification_prefs ?? {}) as Record<string, unknown>;
+  if (type && prefs[type] === false) return json({ delivered: false, reason: "muted" });
 
   const outcome = await apns.send(user.push_token, message);
   if (outcome === "unregistered") {
