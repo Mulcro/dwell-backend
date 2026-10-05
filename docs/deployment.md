@@ -1,5 +1,7 @@
 # Deployment
 
+> **Historical snapshot.** Counts and lists below describe the backend when this was written. The current state is in the [README](../README.md) and `docs/backend_design.md`.
+
 Deployed 2026-09-23 to Supabase project `lcsyjslwhdzlfyegbaii`.
 
 Base URL: `https://lcsyjslwhdzlfyegbaii.supabase.co`
