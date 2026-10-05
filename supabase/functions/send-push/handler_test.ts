@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import type { Apns, PushOutcome } from "../_shared/apns.ts";
+import type { Apns, PushMessage, PushOutcome } from "../_shared/apns.ts";
 import { toErrorResponse } from "../_shared/http.ts";
 import { handleSendPush } from "./handler.ts";
 
@@ -43,7 +43,7 @@ function fakeDb(pushToken: string | null, options: { clearError?: Error } = {}) 
 }
 
 function fakeApns(outcome: PushOutcome) {
-  const sent: Array<{ token: string; title: string; body: string }> = [];
+  const sent: Array<{ token: string } & PushMessage> = [];
   const apns: Apns = {
     send: (token, message) => {
       sent.push({ token, ...message });
@@ -149,4 +149,33 @@ Deno.test("the message needs a recipient and words", async () => {
   );
   assertEquals(res.status, 400);
   assertEquals(await res.json(), { error: "body is required" });
+});
+
+Deno.test("a thread id and tap data are passed through to Apple", async () => {
+  const apple = fakeApns("sent");
+  const res = await call(
+    request({
+      user_id: USER,
+      title: "t",
+      body: "b",
+      thread_id: "reflection-1",
+      data: { type: "reply", comment_id: "c1" },
+    }),
+    fakeDb("tok").client,
+    apple.apns,
+  );
+  assertEquals(await res.json(), { delivered: true });
+  assertEquals(apple.sent[0].threadId, "reflection-1");
+  assertEquals(apple.sent[0].data, { type: "reply", comment_id: "c1" });
+});
+
+Deno.test("tap data must be flat strings and may not name aps", async () => {
+  for (const data of [{ comment_id: 1 }, { aps: "x" }, ["c1"], "c1"]) {
+    const res = await call(
+      request({ user_id: USER, title: "t", body: "b", data }),
+      fakeDb("tok").client,
+      fakeApns("sent").apns,
+    );
+    assertEquals(res.status, 400);
+  }
 });

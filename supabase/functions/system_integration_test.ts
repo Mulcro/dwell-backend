@@ -503,7 +503,12 @@ Deno.test("system-triggered functions", async (t) => {
         // row assertions are: to this member and these words.
         assertEquals(pushesTo(dispatch, alice.id, nudges![0].content), [{
           name: "send-push",
-          body: { user_id: alice.id, title: "Sys Test", body: nudges![0].content },
+          body: {
+            user_id: alice.id,
+            title: "Sys Test",
+            body: nudges![0].content,
+            data: { type: "nudge", group_id: f.groupId, day_instance_id: f.dayId },
+          },
         }]);
 
         // Runs every 15 minutes: it must not nudge the same person again, on either channel.

@@ -1,11 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Apns } from "../_shared/apns.ts";
 import { requireServiceRole } from "../_shared/auth.ts";
-import { json, readJson, requireString } from "../_shared/http.ts";
+import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
 
 /**
  * Delivers one notification to one member. Service role only: called by the functions
- * that decide a message is due (today, daily-cron-nudge), never by a client.
+ * that decide a message is due (daily-cron-nudge, submit-comment), never by a client.
+ *
+ * { user_id, title, body, thread_id?, data? } -- `data` is a flat object of strings sent
+ * beside `aps` so the app can open the right screen on tap (KAN-22).
  *
  * Delivery is best effort. A member with no token, or whose device Apple no longer
  * knows, gets `delivered: false` and nothing else happens -- the ai_insights row that
@@ -21,7 +24,13 @@ export async function handleSendPush(
 
   const body = await readJson<Record<string, unknown>>(req);
   const userId = requireString(body, "user_id");
-  const message = { title: requireString(body, "title"), body: requireString(body, "body") };
+  const data = readData(body.data);
+  const message = {
+    title: requireString(body, "title"),
+    body: requireString(body, "body"),
+    ...(body.thread_id === undefined ? {} : { threadId: requireString(body, "thread_id") }),
+    ...(data ? { data } : {}),
+  };
 
   const { data: user, error } = await db
     .from("users")
@@ -46,4 +55,20 @@ export async function handleSendPush(
     if (clearError) console.error("send-push could not clear a dead token", clearError);
   }
   return json(outcome === "sent" ? { delivered: true } : { delivered: false, reason: outcome });
+}
+
+/** Custom keys must be flat strings, and may not be called `aps`. */
+function readData(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "data must be an object of strings");
+  }
+  const out: Record<string, string> = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (key === "aps" || typeof v !== "string") {
+      throw new HttpError(400, "data must be an object of strings, without an aps key");
+    }
+    out[key] = v;
+  }
+  return out;
 }

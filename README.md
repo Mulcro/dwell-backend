@@ -91,7 +91,7 @@ flowchart TB
 | `youversion-signin`, `yv-callback` | app | YouVersion sign-in |
 | `generate-group-pulse` | database trigger | The daily Group Pulse card |
 | `end-of-challenge-summary` | challenge end (trigger, sweep, a member ending it, or expiry) | The closing recap |
-| `daily-cron-nudge`, `send-push` | cron | Nudges in-app and over APNs |
+| `daily-cron-nudge`, `send-push` | cron, and `submit-comment` | Nudges in-app and over APNs; a push to the author when someone replies |
 | `daily-cron-autoskip`, `daily-cron-inactivity-check` | cron | Skip stalled days; prompt, pause or expire quiet groups |
 | `weekly-cron-leaderboard` | cron | Weekly participation and the weekly recap |
 | `cleanup-media` | cron | Remove storage objects for deleted content |
