@@ -722,13 +722,11 @@ Deno.test("client-facing functions", async (t) => {
       assertEquals(posted.status, 200);
 
       const calls: Array<Record<string, unknown>> = [];
-      const deferred: Array<Promise<unknown>> = [];
       const push = {
-        dispatch: (_name: string, body: unknown) => {
+        invoke: (_name: string, body: unknown) => {
           calls.push(body as Record<string, unknown>);
-          return Promise.resolve();
+          return Promise.resolve({ delivered: true });
         },
-        defer: (work: Promise<unknown>) => deferred.push(work),
       };
       const nudge = (token: string) =>
         invoke(() => handleNudgeGroup(post({ group_id: crew.group_id }, token), db, push));
@@ -736,7 +734,6 @@ Deno.test("client-facing functions", async (t) => {
       const first = await nudge(sender.token);
       assertEquals(first.status, 200);
       assertEquals(await first.json(), { sent: 1 });
-      await Promise.all(deferred);
       // Not the sender, not the one who posted, not the one who switched nudges off.
       assertEquals(calls.map((c) => c.user_id), [quiet.id]);
 

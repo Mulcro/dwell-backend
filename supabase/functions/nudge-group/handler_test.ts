@@ -1,7 +1,6 @@
 import { assertEquals } from "@std/assert";
-import type { Dispatch } from "../_shared/dispatch.ts";
 import { toErrorResponse } from "../_shared/http.ts";
-import { ALREADY_NUDGED, handleNudgeGroup, type NudgePush } from "./handler.ts";
+import { ALREADY_NUDGED, handleNudgeGroup, NOBODY_REACHED, type NudgePush } from "./handler.ts";
 
 const SENDER = "11111111-1111-1111-1111-111111111111";
 const GROUP = "99999999-0000-0000-0000-000000000001";
@@ -29,7 +28,11 @@ function fakeDb(opts: {
     { id: "d", token: "device-d", prefs: { nudge: false } },
     { id: "e", token: "device-e", prefs: { reply: false } },
   ];
-  const state = { claims: [] as Array<Record<string, unknown>> };
+  const state = {
+    claims: [] as Array<Record<string, unknown>>,
+    released: 0,
+    updated: null as Record<string, unknown> | null,
+  };
   const table = (name: string) => {
     let byUser = false;
     // deno-lint-ignore no-explicit-any
@@ -84,6 +87,18 @@ function fakeDb(opts: {
         state.claims.push(row);
         return Promise.resolve({ error: opts.claimError ?? null });
       },
+      delete: () => {
+        state.released++;
+        // deno-lint-ignore no-explicit-any
+        const chain: any = { eq: () => chain, then: (r: any) => r({ error: null }) };
+        return chain;
+      },
+      update: (row: Record<string, unknown>) => {
+        state.updated = row;
+        // deno-lint-ignore no-explicit-any
+        const chain: any = { eq: () => chain, then: (r: any) => r({ error: null }) };
+        return chain;
+      },
     };
     return api;
   };
@@ -103,15 +118,22 @@ function fakeDb(opts: {
   };
 }
 
-function pushRecorder() {
+/** send-push's answer per recipient; delivered unless named in `fail`. */
+function pushRecorder(fail: string[] = [], answer?: Record<string, unknown> | null) {
   const calls: Array<{ name: string; body: Record<string, unknown> }> = [];
-  const deferred: Array<Promise<unknown>> = [];
-  const dispatch = ((name: string, body: unknown) => {
-    calls.push({ name, body: body as Record<string, unknown> });
-    return Promise.resolve();
-  }) as Dispatch;
-  const push: NudgePush = { dispatch, defer: (work) => deferred.push(work) };
-  return { calls, deferred, push };
+  const push: NudgePush = {
+    invoke: (name, body) => {
+      const b = body as Record<string, unknown>;
+      calls.push({ name, body: b });
+      if (answer !== undefined) return Promise.resolve(answer);
+      return Promise.resolve(
+        fail.includes(b.user_id as string)
+          ? { delivered: false, reason: "failed" }
+          : { delivered: true },
+      );
+    },
+  };
+  return { calls, push };
 }
 
 const post = (body: unknown, token = "good") =>
@@ -138,7 +160,6 @@ Deno.test("only group-mates who haven't posted, have a device and allow nudges g
   assertEquals(res.status, 200);
   // a and e: not the sender, b posted, c has no device, d switched nudges off.
   assertEquals(await res.json(), { sent: 2 });
-  await Promise.all(p.deferred);
   assertEquals(p.calls.map((c) => c.body.user_id), ["a", "e"]);
   assertEquals(p.calls[0], {
     name: "send-push",
@@ -174,7 +195,33 @@ Deno.test("a second nudge the same day is a 409 the app can show, and sends noth
   const res = await call(post({ group_id: GROUP }), db.client, p.push);
   assertEquals(res.status, 409);
   assertEquals((await res.json()).error, ALREADY_NUDGED);
-  assertEquals(p.deferred.length, 0);
+  assertEquals(p.calls.length, 0);
+});
+
+Deno.test("sent counts pushes Apple accepted, not pushes attempted", async () => {
+  const db = fakeDb();
+  const res = await call(post({ group_id: GROUP }), db.client, pushRecorder(["e"]).push);
+  assertEquals(await res.json(), { sent: 1 });
+  // The record says how many were actually reached.
+  assertEquals(db.state.updated, { recipients: 1 });
+  assertEquals(db.state.released, 0);
+});
+
+Deno.test("if nobody could be reached, the nudge is not used up: 502 and the claim released", async () => {
+  for (const p of [pushRecorder(["a", "e"]), pushRecorder([], null)]) {
+    const db = fakeDb();
+    const res = await call(post({ group_id: GROUP }), db.client, p.push);
+    assertEquals(res.status, 502);
+    assertEquals((await res.json()).error, NOBODY_REACHED);
+    assertEquals(db.state.released, 1);
+  }
+});
+
+Deno.test("nobody to nudge is not a failure: the nudge still counts for today", async () => {
+  const db = fakeDb({ members: [{ id: SENDER, token: "s" }] });
+  const res = await call(post({ group_id: GROUP }), db.client, pushRecorder().push);
+  assertEquals(await res.json(), { sent: 0 });
+  assertEquals(db.state.released, 0);
 });
 
 Deno.test("a non-member is refused", async () => {
@@ -191,7 +238,7 @@ Deno.test("a group that isn't active is refused", async () => {
     const p = pushRecorder();
     const res = await call(post({ group_id: GROUP }), fakeDb({ status }).client, p.push);
     assertEquals(res.status, 409);
-    assertEquals(p.deferred.length, 0);
+    assertEquals(p.calls.length, 0);
   }
 });
 
@@ -201,17 +248,6 @@ Deno.test("it requires a session and a group id", async () => {
     401,
   );
   assertEquals((await call(post({}), fakeDb().client, pushRecorder().push)).status, 400);
-});
-
-Deno.test("the button gets its answer without waiting for Apple", async () => {
-  const db = fakeDb();
-  const deferred: Array<Promise<unknown>> = [];
-  const res = await call(post({ group_id: GROUP }), db.client, {
-    dispatch: () => new Promise(() => {}),
-    defer: (work) => deferred.push(work),
-  });
-  assertEquals(res.status, 200);
-  assertEquals(deferred.length, 1);
 });
 
 Deno.test("a failed lookup is a 500, not a denial", async () => {

@@ -1,17 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "../_shared/auth.ts";
-import type { Dispatch } from "../_shared/dispatch.ts";
+import type { Invoke } from "../_shared/dispatch.ts";
 import { HttpError, json, readJson, requireString } from "../_shared/http.ts";
 
 export const ALREADY_NUDGED = "You've already nudged the group today";
 
-/**
- * How the pushes leave: `defer` runs them after the response is sent (the runtime's
- * waitUntil), so a slow Apple round-trip never holds the button.
- */
+export const NOBODY_REACHED = "Couldn't reach anyone just now. Try again in a moment.";
+
+/** How a push leaves: send-push's own answer comes back, so `sent` counts deliveries. */
 export interface NudgePush {
-  dispatch: Dispatch;
-  defer(work: Promise<unknown>): void;
+  invoke: Invoke;
 }
 
 /**
@@ -22,12 +20,19 @@ export interface NudgePush {
  * This is a person reaching out, separate from Eagle's AI nudge that the cron writes.
  *
  * Recipients: members who haven't posted an approved reflection on the current day, who
- * have a device, and who haven't switched nudges off -- never the sender. `sent` is how
- * many pushes went out; 0 is a fine answer, e.g. when everyone has posted.
+ * have a device, and who haven't switched nudges off -- never the sender. `sent` counts
+ * pushes Apple accepted; 0 is a fine answer when there was nobody to nudge. The sends run
+ * in parallel and are bounded by the invoke timeout.
+ *
+ * This is a member reaching out, so it is push-only and recorded in `group_nudges`. It
+ * deliberately writes no `ai_insights` nudge row: the AI nudge cron counts those to allow
+ * one per person per day, and the app shows them as Eagle's.
  *
  * One nudge per sender per group per day, claimed in the database before anything is
  * sent: a second call that day is a 409, which also lets the button keep its state across
- * a reinstall. The caller must be a member, and the group must be active.
+ * a reinstall. If there were people to nudge but not one push got through, the claim is
+ * released and the call answers 502, so the sender can try again. The caller must be a
+ * member, and the group must be active.
  */
 export async function handleNudgeGroup(
   req: Request,
@@ -87,17 +92,35 @@ export async function handleNudgeGroup(
     .maybeSingle();
   const firstName = (sender?.name ?? "").trim().split(/\s+/)[0] || "Someone";
 
-  push.defer(Promise.allSettled(recipients.map((userId) =>
-    push.dispatch("send-push", {
+  const answers = await Promise.all(recipients.map((userId) =>
+    push.invoke("send-push", {
       user_id: userId,
       title: group.name,
       body: `${firstName} is hoping you'll add your reflection today.`,
       thread_id: groupId,
       data: { type: "nudge", group_id: groupId, day_instance_id: day.id },
     })
-  )));
+  ));
+  const sent = answers.filter((a) => a?.delivered === true).length;
 
-  return json({ sent: recipients.length });
+  if (recipients.length > 0 && sent === 0) {
+    // Nobody received it, so it shouldn't use up today's nudge.
+    const { error: releaseError } = await db
+      .from("group_nudges")
+      .delete()
+      .eq("group_id", groupId)
+      .eq("day_instance_id", day.id)
+      .eq("sender_id", senderId);
+    if (releaseError) console.error("nudge-group could not release the claim", releaseError);
+    throw new HttpError(502, NOBODY_REACHED);
+  }
+
+  if (sent !== recipients.length) {
+    await db.from("group_nudges").update({ recipients: sent })
+      .eq("group_id", groupId).eq("day_instance_id", day.id).eq("sender_id", senderId);
+  }
+
+  return json({ sent });
 }
 
 /**
