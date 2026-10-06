@@ -86,6 +86,7 @@ flowchart TB
 | `create-group`, `join-group` | app | Form a group; join by invite code or by one-tap "same crew, new plan" invitation |
 | `submit-reflection`, `submit-comment` | app | Moderate, store, enrich and translate posts and replies |
 | `group-challenge-action` | app | Continue, pause or end a quiet challenge |
+| `nudge-group` | app | A member nudges the group-mates who haven't posted today, once a day |
 | `set-avatar`, `delete-account` | app | Moderated profile pictures; full account erasure |
 | `get-passage` | app | Cached plain passage text from YouVersion (the reader itself is YouVersion's SDK) |
 | `youversion-signin`, `yv-callback` | app | YouVersion sign-in |

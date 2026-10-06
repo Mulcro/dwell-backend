@@ -6,6 +6,7 @@
  */
 import { assertEquals } from "@std/assert";
 import { handleCreateGroup } from "./create-group/handler.ts";
+import { ALREADY_NUDGED, handleNudgeGroup } from "./nudge-group/handler.ts";
 import { ONGOING_GROUP_MESSAGE } from "./_shared/membership.ts";
 import { handleJoinGroup } from "./join-group/handler.ts";
 import { handleSubmitReflection } from "./submit-reflection/handler.ts";
@@ -693,6 +694,60 @@ Deno.test("client-facing functions", async (t) => {
       );
       assertEquals(both.status, 400);
       assertEquals((await both.json()).error, "Send invite_token or group_id, not both");
+    });
+
+    await t.step("nudge the group: only those who haven't posted, once a day", async () => {
+      const [sender, quiet, poster, muted, outsider] = await Promise.all(
+        ["sender", "quiet", "poster", "muted", "outsider"].map(newcomer),
+      );
+      const crew = await (await createGroup(
+        { name: "Nudge Crew", plan_challenge_id: SEED_PLAN_ID },
+        sender.token,
+      )).json();
+      groupIds.push(crew.group_id);
+      for (const u of [quiet, poster, muted]) {
+        await joinGroup({ invite_token: crew.invite_token }, u.token);
+      }
+      for (const u of [sender, quiet, poster, muted]) {
+        await db.from("users").update({ push_token: `device-${u.id}` }).eq("id", u.id);
+      }
+      await db.from("users").update({ notification_prefs: { nudge: false } }).eq("id", muted.id);
+
+      const { data: day } = await db
+        .from("day_instances").select("id").eq("group_id", crew.group_id).single();
+      const posted = await submit(
+        { day_instance_id: day!.id, media_type: "text", content: "Here today.", language: "en" },
+        poster.token,
+      );
+      assertEquals(posted.status, 200);
+
+      const calls: Array<Record<string, unknown>> = [];
+      const deferred: Array<Promise<unknown>> = [];
+      const push = {
+        dispatch: (_name: string, body: unknown) => {
+          calls.push(body as Record<string, unknown>);
+          return Promise.resolve();
+        },
+        defer: (work: Promise<unknown>) => deferred.push(work),
+      };
+      const nudge = (token: string) =>
+        invoke(() => handleNudgeGroup(post({ group_id: crew.group_id }, token), db, push));
+
+      const first = await nudge(sender.token);
+      assertEquals(first.status, 200);
+      assertEquals(await first.json(), { sent: 1 });
+      await Promise.all(deferred);
+      // Not the sender, not the one who posted, not the one who switched nudges off.
+      assertEquals(calls.map((c) => c.user_id), [quiet.id]);
+
+      const again = await nudge(sender.token);
+      assertEquals(again.status, 409);
+      assertEquals((await again.json()).error, ALREADY_NUDGED);
+
+      // Each member has their own nudge for the day.
+      assertEquals((await nudge(quiet.token)).status, 200);
+
+      assertEquals((await nudge(outsider.token)).status, 403);
     });
   } finally {
     for (const id of groupIds) await db.from("groups").delete().eq("id", id);

@@ -85,6 +85,14 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/send-pu
   -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" -H 'Content-Type: application/json' -d '{}')
 [ "$code" = "400" ] || fail "send-push did not reject an empty message (HTTP $code)"
 
+echo "nudge-group boots, wants a session, and validates its input..."
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/nudge-group" \
+  -H "apikey: $ANON" -H 'Content-Type: application/json' -d '{}')
+[ "$code" = "401" ] || fail "nudge-group answered without a session (HTTP $code)"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/nudge-group" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}')
+[ "$code" = "400" ] || fail "nudge-group did not reject a missing group_id (HTTP $code)"
+
 echo "delete-account refuses without the confirmation..."
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/functions/v1/delete-account" \
   -H "apikey: $ANON" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}')
