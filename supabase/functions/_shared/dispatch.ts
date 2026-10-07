@@ -28,3 +28,33 @@ export function createDispatch(url: string, serviceRoleKey: string): Dispatch {
     }
   };
 }
+
+/**
+ * Like Dispatch, but hands back the function's JSON answer, or null if the call failed
+ * or timed out. For a caller that has to report what actually happened.
+ */
+export type Invoke = (name: string, body: unknown) => Promise<Record<string, unknown> | null>;
+
+export function createInvoke(url: string, serviceRoleKey: string): Invoke {
+  return async (name, body) => {
+    try {
+      const res = await fetch(`${url}/functions/v1/${name}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceRoleKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        console.error(`invoke ${name} failed`, res.status);
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error(`invoke ${name} threw`, err);
+      return null;
+    }
+  };
+}
